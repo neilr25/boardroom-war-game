@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  boardroom:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./boardroom:/app/boardroom
+    command: ["--idea", "A subscription service for AI-generated bedtime stories."]

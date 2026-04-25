@@ -1,0 +1,12 @@
+# Core framework — latest v1.x line
+crewai>=0.70.0
+
+# Configuration & data validation
+pydantic>=2.0
+python-dotenv>=1.0
+
+# YAML frontmatter for RESOLUTION.md
+pyyaml>=6.0
+
+# Optional: rich CLI output
+rich>=13.0
