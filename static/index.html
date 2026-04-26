@@ -18,6 +18,8 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
 .conversation-connector { stroke-dasharray: 5; animation: dash 1s linear infinite; }
 @keyframes dash { to { stroke-dashoffset: -10; } }
+.thought-border { border-left: 3px solid #8b5cf6; }
+.speech-border { border-left: 3px solid #3b82f6; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #18181b; }
 ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
@@ -43,7 +45,6 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 <aside class="w-72 border-r border-zinc-800 bg-zinc-900 flex flex-col">
 <div class="p-4 border-b border-zinc-800">
 <h2 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Sessions</h2>
-<!-- New Session Form -->
 <div class="space-y-2">
 <input id="idea-input" type="text" placeholder="Enter startup idea..." class="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 transition">
 <div class="flex gap-2">
@@ -60,7 +61,6 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 </div>
 </div>
 <div id="session-list" class="flex-1 overflow-y-auto p-2 space-y-1">
-<!-- Sessions injected here -->
 <div class="text-center text-xs text-zinc-500 mt-8">Loading sessions...</div>
 </div>
 </aside>
@@ -73,7 +73,7 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 <div class="absolute top-2 left-2 text-xs text-zinc-500 bg-black/40 px-2 py-1 rounded">Conversation Flow</div>
 </div>
 <!-- Transcript Feed -->
-<div id="transcript-feed" class="flex-1 overflow-y-auto p-4 space-y-3">
+<div id="transcript-feed" class="flex-1 overflow-y-auto p-4 space-y-1">
 <div class="text-center text-zinc-500 text-sm mt-20">
 <div class="w-16 h-16 mx-auto mb-4 border-2 border-dashed border-zinc-700 rounded-full flex items-center justify-center">
 <svg class="w-8 h-8 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"></path></svg>
@@ -81,14 +81,6 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 <p>No boardroom session running.</p>
 <p class="text-xs mt-1 text-zinc-600">Enter an idea and click Start Board to begin deliberation.</p>
 </div>
-</div>
-<!-- Memo Preview -->
-<div id="memo-panel" class="h-64 border-t border-zinc-800 bg-zinc-900 hidden flex-col">
-<div class="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
-<span class="text-xs font-semibold text-zinc-400">Memos</span>
-<button onclick="document.getElementById('memo-panel').classList.add('hidden')" class="text-zinc-500 hover:text-white text-xs">Close</button>
-</div>
-<div id="memo-content" class="flex-1 overflow-y-auto p-4 text-sm text-zinc-300 mono"></div>
 </div>
 </main>
 
@@ -98,7 +90,6 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 <h2 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Board Members</h2>
 </div>
 <div id="agent-roster" class="flex-1 overflow-y-auto p-3 space-y-2">
-<!-- Agents injected here -->
 </div>
 <div class="border-t border-zinc-800 p-4">
 <div class="text-xs text-zinc-500 mb-2">Status</div>
@@ -108,220 +99,402 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
 </div>
 
 <script>
-// Agent config
+// ── Agent config ──────────────────────────────────────────────
 const AGENTS = {
-board_chair: { name: "Board Chair", model: "kimi-k2.6:cloud", color: "#ef4444", temp: "0.3", icon: "G" },
-ceo: { name: "CEO", model: "gemma4:31b:cloud", color: "#3b82f6", temp: "0.7", icon: "C" },
-cfo: { name: "CFO", model: "deepseek-v4-pro:cloud", color: "#f59e0b", temp: "0.3", icon: "F" },
-cto: { name: "CTO", model: "glm-5.1:cloud", color: "#8b5cf6", temp: "0.3", icon: "T" },
-cro: { name: "CRO", model: "gemma4:27b:cloud", color: "#ec4899", temp: "0.6", icon: "R" },
-customer: { name: "Customer", model: "gemma4:9b:cloud", color: "#10b981", temp: "0.1", icon: "U" },
-counsel: { name: "Counsel", model: "deepseek-v4-pro:cloud", color: "#6366f1", temp: "0.0", icon: "L" }
+  board_chair: { name: "Board Chair",  color: "#ef4444", icon: "\u{1F3A4}", model: "kimi-k2.6:cloud",   temp: "0.3" },
+  ceo:         { name: "CEO",          color: "#3b82f6", icon: "\u{1F4BC}", model: "gemma4:31b:cloud",   temp: "0.7" },
+  cfo:        { name: "CFO",          color: "#f59e0b", icon: "\u{1F4B0}", model: "gemma4:31b:cloud",   temp: "0.3" },
+  cto:        { name: "CTO",          color: "#8b5cf6", icon: "\u{1F4BB}", model: "glm-5.1:cloud",      temp: "0.3" },
+  cro:        { name: "CRO",          color: "#ec4899", icon: "\u{1F4C8}", model: "gemma4:27b:cloud",   temp: "0.6" },
+  customer:   { name: "Customer",     color: "#10b981", icon: "\u{1F6D2}", model: "gemma4:9b:cloud",    temp: "0.1" },
+  counsel:    { name: "Counsel",      color: "#6366f1", icon: "\u2696\uFE0F",  model: "gemma4:31b:cloud",   temp: "0.0" }
 };
 
-// Build roster
+// ── Helpers ───────────────────────────────────────────────────
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function resolveAgentKey(data) {
+  if (data.agent_key && AGENTS[data.agent_key]) return data.agent_key;
+  if (data.agent) {
+    const k = data.agent.toLowerCase().replace(/\s+/g, '_');
+    if (AGENTS[k]) return k;
+  }
+  return null;
+}
+
+let currentSession = null;
+let eventBuffer = [];
+let agentTimers = {};
+
+// ── Build roster ──────────────────────────────────────────────
 const roster = document.getElementById('agent-roster');
 roster.innerHTML = Object.entries(AGENTS).map(([key, a]) => `
 <div id="agent-${key}" class="agent-card p-3 rounded-lg bg-zinc-800/50 backdrop-blur cursor-pointer hover:bg-zinc-800" onclick="focusAgent('${key}')">
-<div class="flex items-center gap-3">
-<div class="w-8 h-8 rounded font-bold text-sm flex items-center justify-center" style="background:${a.color}22; color:${a.color}">
-${a.icon}
-</div>
-<div class="flex-1 min-w-0">
-<div class="text-sm font-medium text-white truncate">${a.name}</div>
-<div class="text-xs text-zinc-500 truncate mono">${a.model}</div>
-</div>
-<span class="text-xs text-zinc-600 tabular-nums">${a.temp}</span>
-</div>
-<div class="mt-2 text-xs text-zinc-600 agent-state hidden">Idle</div>
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded font-bold text-sm flex items-center justify-center" style="background:${a.color}22; color:${a.color}">
+      ${a.icon}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="text-sm font-medium text-white truncate">${a.name}</div>
+      <div class="text-xs text-zinc-500 truncate mono">${a.model}</div>
+    </div>
+    <span class="text-xs text-zinc-600 tabular-nums">${a.temp}</span>
+  </div>
+  <div class="mt-2 text-xs text-zinc-500 agent-state hidden">Idle</div>
 </div>
 `).join('');
 
-// Conversation graph SVG
+// ── Conversation graph SVG ─────────────────────────────────────
 const svg = document.getElementById('conversation-graph');
-const width = 800, height = 192;
-svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+const gW = 800, gH = 192;
+svg.setAttribute('viewBox', `0 0 ${gW} ${gH}`);
 
 const positions = {};
 Object.keys(AGENTS).forEach((key, i) => {
-const angle = (i / 7) * Math.PI * 2 - Math.PI / 2;
-positions[key] = {
-x: width/2 + Math.cos(angle) * 280,
-y: height/2 + Math.sin(angle) * 70
-};
+  const angle = (i / 7) * Math.PI * 2 - Math.PI / 2;
+  positions[key] = {
+    x: gW / 2 + Math.cos(angle) * 280,
+    y: gH / 2 + Math.sin(angle) * 70
+  };
 });
 
-// Draw nodes
+// Draw static nodes
 Object.entries(AGENTS).forEach(([key, a]) => {
-const pos = positions[key];
-const g = document.createElementNS('http://www.w3.org/2000/svg','g');
-// Outer glow
-if (key === 'board_chair') {
-g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="28" fill="${a.color}" fill-opacity="0.15"><animate attributeName="r" values="28;32;28" dur="3s" repeatCount="indefinite"/></circle>`;
-}
-g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="24" fill="${a.color}" fill-opacity="0.25" stroke="${a.color}" stroke-width="2"/>`;
-g.innerHTML += `<text x="${pos.x}" y="${pos.y}" text-anchor="middle" dy="0.35em" fill="white" font-size="12" font-weight="bold">${a.icon}</text>`;
-g.innerHTML += `<text x="${pos.x}" y="${pos.y+38}" text-anchor="middle" fill="#a1a1aa" font-size="10">${a.name}</text>`;
-svg.appendChild(g);
+  const pos = positions[key];
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  if (key === 'board_chair') {
+    g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="28" fill="${a.color}" fill-opacity="0.15"><animate attributeName="r" values="28;32;28" dur="3s" repeatCount="indefinite"/></circle>`;
+  }
+  g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="24" fill="${a.color}" fill-opacity="0.25" stroke="${a.color}" stroke-width="2" id="node-${key}"/>`;
+  g.innerHTML += `<text x="${pos.x}" y="${pos.y}" text-anchor="middle" dy="0.35em" fill="white" font-size="12" font-weight="bold">${a.icon}</text>`;
+  g.innerHTML += `<text x="${pos.x}" y="${pos.y + 38}" text-anchor="middle" fill="#a1a1aa" font-size="10">${a.name}</text>`;
+  svg.appendChild(g);
 });
 
-// Draw connecting lines
-function drawConnections(activeFrom, activeTo) {
-svg.querySelectorAll('.connector').forEach(el => el.remove());
-if (!activeFrom || !activeTo) return;
-const from = positions[activeFrom], to = positions[activeTo];
-const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-line.setAttribute('x1', from.x);
-line.setAttribute('y1', from.y);
-line.setAttribute('x2', to.x);
-line.setAttribute('y2', to.y);
-line.setAttribute('stroke', AGENTS[activeFrom].color);
-line.setAttribute('stroke-width', '2');
-line.setAttribute('class', 'connector conversation-connector');
-svg.appendChild(line);
+function drawConnections(fromKey, toKey) {
+  svg.querySelectorAll('.connector').forEach(el => el.remove());
+  if (!fromKey || !toKey || !positions[fromKey] || !positions[toKey]) return;
+  const from = positions[fromKey], to = positions[toKey];
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+  line.setAttribute('x2', to.x);   line.setAttribute('y2', to.y);
+  line.setAttribute('stroke', AGENTS[fromKey].color);
+  line.setAttribute('stroke-width', '2');
+  line.setAttribute('class', 'connector conversation-connector');
+  svg.appendChild(line);
 }
 
-// SSE
+// ── Agent state management ────────────────────────────────────
+function setAgentState(key, state) {
+  if (!key || !AGENTS[key]) return;
+  // Clear previous timer for this agent
+  if (agentTimers[key]) clearTimeout(agentTimers[key]);
+
+  const el = document.getElementById(`agent-${key}`);
+  if (!el) return;
+  el.classList.remove('speaking', 'thinking');
+  el.classList.add(state);
+  const stEl = el.querySelector('.agent-state');
+  stEl.textContent = state === 'speaking' ? 'Speaking...' : 'Thinking...';
+  stEl.classList.remove('hidden');
+
+  // Highlight SVG node
+  const node = document.getElementById(`node-${key}`);
+  if (node) {
+    node.setAttribute('stroke-width', '4');
+    node.setAttribute('stroke', state === 'speaking' ? '#3b82f6' : '#8b5cf6');
+  }
+
+  // Draw connection to chair
+  if (key !== 'board_chair') drawConnections(key, 'board_chair');
+
+  // Auto-clear after 5s
+  agentTimers[key] = setTimeout(() => {
+    el.classList.remove('speaking', 'thinking');
+    stEl.classList.add('hidden');
+    if (node) {
+      node.setAttribute('stroke-width', '2');
+      node.setAttribute('stroke', AGENTS[key].color);
+    }
+  }, 5000);
+}
+
+// ── Render functions ──────────────────────────────────────────
+function renderSystemBanner(text, emoji) {
+  const feed = document.getElementById('transcript-feed');
+  const div = document.createElement('div');
+  div.className = 'message-bubble text-center my-4';
+  div.innerHTML = `<span class="text-zinc-500 text-xs bg-zinc-800/50 px-3 py-1 rounded-full">${emoji} ${escapeHtml(text)}</span>`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderAgentBubble(agentKey, text, type) {
+  const agent = AGENTS[agentKey];
+  if (!agent) { renderSystemBanner(text, ''); return; }
+  const feed = document.getElementById('transcript-feed');
+  const div = document.createElement('div');
+  div.className = 'message-bubble mb-3';
+
+  if (type === 'think') {
+    div.innerHTML = `
+      <div class="flex items-start gap-2 thought-border pl-3 py-1">
+        <span class="text-lg shrink-0">${agent.icon}</span>
+        <div class="flex-1 min-w-0">
+          <span class="font-semibold text-sm" style="color:${agent.color}">${agent.name}</span>
+          <span class="text-zinc-600 text-xs ml-2">(thinking)</span>
+          <p class="mt-1 text-sm text-zinc-400 italic leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(text)}</p>
+        </div>
+      </div>`;
+  } else if (type === 'say') {
+    div.innerHTML = `
+      <div class="flex items-start gap-2 speech-border pl-3 py-1">
+        <span class="text-lg shrink-0">${agent.icon}</span>
+        <div class="flex-1 min-w-0">
+          <span class="font-semibold text-sm" style="color:${agent.color}">${agent.name}</span>
+          <p class="mt-1 text-sm text-zinc-200 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(text)}</p>
+        </div>
+      </div>`;
+  }
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderChatBubble(fromKey, toKey, message) {
+  const from = AGENTS[fromKey];
+  const to = toKey ? AGENTS[toKey] : null;
+  if (!from) { renderSystemBanner(message, ''); return; }
+  const feed = document.getElementById('transcript-feed');
+  const div = document.createElement('div');
+  div.className = 'message-bubble mb-2';
+  const toLabel = to ? `<span class="text-zinc-500"> &rarr; </span><span style="color:${to.color}" class="font-semibold text-sm">${to.name}</span>` : '<span class="text-zinc-600 text-xs ml-1">(to board)</span>';
+  div.innerHTML = `
+    <div class="flex items-start gap-2 pl-3 py-1" style="border-left: 3px solid ${from.color}">
+      <span class="text-lg shrink-0">${from.icon}</span>
+      <div class="flex-1 min-w-0">
+        <span class="font-semibold text-sm" style="color:${from.color}">${from.name}</span>${toLabel}
+        <p class="mt-1 text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(message)}</p>
+      </div>
+    </div>`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderTaskLine(agentKey, taskName, status) {
+  const agent = AGENTS[agentKey];
+  const feed = document.getElementById('transcript-feed');
+  const div = document.createElement('div');
+  div.className = 'message-bubble mb-1';
+  const emoji = status === 'start' ? '\u{1F680}' : '\u2705';
+  const label = status === 'start' ? 'started' : 'finished';
+  div.innerHTML = `<span class="text-xs text-zinc-500">${emoji} <span style="color:${agent ? agent.color : '#a1a1aa'}">${agent ? agent.name : 'Unknown'}</span> ${label}: <span class="text-zinc-400">${escapeHtml(taskName)}</span></span>`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ── Event dispatcher ──────────────────────────────────────────
+function handleEvent(data) {
+  eventBuffer.push(data);
+  const key = resolveAgentKey(data);
+
+  switch (data.type) {
+    case 'session_start':
+      currentSession = data.session_id;
+      document.getElementById('session-badge').textContent = data.session_id;
+      document.getElementById('session-badge').classList.remove('hidden');
+      document.getElementById('status-display').textContent = 'Deliberation in progress...';
+      document.getElementById('transcript-feed').innerHTML = '';
+      eventBuffer = [];
+      eventBuffer.push(data);
+      renderSystemBanner(`Session ${data.session_id} — Idea: ${data.idea || ''}`, '\u{1F3AC}');
+      break;
+
+    case 'round_start':
+      renderSystemBanner(`Round ${data.round_num || '?'} begins`, '\u{1F4CB}');
+      break;
+
+    case 'chat':
+      renderChatBubble(key, data.to ? resolveAgentKey({agent: data.to}) : null, data.message || '');
+      if (key) setAgentState(key, 'speaking');
+      break;
+
+    case 'agent_think':
+      renderAgentBubble(key, data.thought || '', 'think');
+      if (key) setAgentState(key, 'thinking');
+      break;
+
+    case 'agent_say':
+      renderAgentBubble(key, data.message || '', 'say');
+      if (key) setAgentState(key, 'speaking');
+      break;
+
+    case 'agent_action':
+      renderSystemBanner(`${AGENTS[key] ? AGENTS[key].name : 'Agent'} called tool: ${data.tool || '?'}`, '\u{1F527}');
+      if (key) setAgentState(key, 'thinking');
+      break;
+
+    case 'agent_result':
+      renderSystemBanner(`Tool result for ${AGENTS[key] ? AGENTS[key].name : 'Agent'}: ${(data.result || '').substring(0, 100)}...`, '\u{1F4E5}');
+      break;
+
+    case 'agent_retry':
+      renderSystemBanner(`${AGENTS[key] ? AGENTS[key].name : 'Agent'} retrying (attempt ${data.attempt || '?'})`, '\u26A0\uFE0F');
+      break;
+
+    case 'model_fallback':
+      renderSystemBanner(`${AGENTS[key] ? AGENTS[key].name : 'Agent'} model fallback: ${data.failed_model} \u2192 ${data.fallback_model}`, '\u{1F527}');
+      break;
+
+    case 'task_start':
+      renderTaskLine(key, data.task_name || 'Task', 'start');
+      if (key) setAgentState(key, 'thinking');
+      break;
+
+    case 'task_end':
+      renderTaskLine(key, data.task_name || 'Task', 'end');
+      if (key) setAgentState(key, 'speaking');
+      break;
+
+    case 'round_end':
+      renderSystemBanner(`Round ${data.round_num || '?'} concludes`, '\u23F3');
+      break;
+
+    case 'session_done':
+      const res = data.resolution || 'Unknown';
+      const risk = data.risk_level || 'N/A';
+      const emoji = res === 'APPROVED' ? '\u2705' : res === 'REJECTED' ? '\u274C' : res === 'CONDITIONAL' ? '\u26A1' : '\u2753';
+      renderSystemBanner(`Final Verdict: ${res} — Risk: ${risk}`, emoji);
+      document.getElementById('status-display').textContent = `Session complete: ${res}`;
+      document.getElementById('start-btn').disabled = false;
+      loadSessions();
+      break;
+
+    case 'session_end':
+      // Legacy raw event from dashboard subprocess monitor
+      document.getElementById('status-display').textContent = `Completed: ${data.status || 'done'}`;
+      document.getElementById('start-btn').disabled = false;
+      loadSessions();
+      break;
+
+    case 'log':
+      // Ignore raw stdout — we have structured events now
+      break;
+
+    case 'keepalive':
+      break;
+
+    default:
+      // Unknown event type — show as compact system line
+      renderSystemBanner(`[${data.type}]`, '');
+      break;
+  }
+}
+
+// ── SSE ───────────────────────────────────────────────────────
 let evtSource = null;
+
 function connectSSE() {
-const status = document.getElementById('connection-status');
-if (evtSource) evtSource.close();
-evtSource = new EventSource('/api/events');
-evtSource.onopen = () => { status.classList.remove('bg-red-500'); status.classList.add('bg-green-500'); };
-evtSource.onerror = () => { status.classList.remove('bg-green-500'); status.classList.add('bg-red-500'); };
-evtSource.onmessage = (e) => {
-const data = JSON.parse(e.data);
-if (data.type === 'session_start') handleSessionStart(data);
-if (data.type === 'log') handleLog(data);
-if (data.type === 'session_end') handleSessionEnd(data);
-if (data.type === 'memo_complete') handleMemo(data);
-};
+  const status = document.getElementById('connection-status');
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/api/events');
+  evtSource.onopen = () => { status.classList.remove('bg-red-500'); status.classList.add('bg-green-500'); };
+  evtSource.onerror = () => { status.classList.remove('bg-green-500'); status.classList.add('bg-red-500'); };
+  evtSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      handleEvent(data);
+    } catch (err) { /* ignore bad JSON */ }
+  };
 }
 
-// Session handling
-let currentSession = null;
-function handleSessionStart(data) {
-currentSession = data.session_id;
-document.getElementById('session-badge').textContent = data.session_id;
-document.getElementById('session-badge').classList.remove('hidden');
-document.getElementById('status-display').textContent = 'Running deliberation...';
-document.getElementById('transcript-feed').innerHTML = '';
-addMessage('system', `Session: ${data.session_id}\nIdea: ${data.idea}`, 'session-start');
-}
-
-function handleLog(data) {
-// Parse CrewAI log lines for agent names
-const text = data.data;
-const agentMatch = text.match(/Agent\s+(\w+)/i) || text.match(/\*\*\s*(CEO|CFO|CTO|CRO|Customer|Counsel|Board Chair)\s*\*\*/);
-if (agentMatch) {
-const agentKey = agentMatch[1].toLowerCase().replace(' ', '_');
-if (AGENTS[agentKey]) {
-highlightAgent(agentKey, 'speaking');
-setTimeout(() => unhighlightAgent(agentKey), 2000);
-}
-}
-// Extract transcript-worthy lines
-if (text.includes('[INFO]:') || text.includes('**') || text.includes('✅')|| text.includes('🗣️')) {
-addMessage('system', text, 'log');
-}
-}
-
-function handleSessionEnd(data) {
-document.getElementById('status-display').textContent = `Completed: ${data.status}`;
-document.getElementById('start-btn').disabled = false;
-loadSessions();
-}
-
-function handleMemo(data) {
-// Show memo preview in panel
-const panel = document.getElementById('memo-panel');
-const content = document.getElementById('memo-content');
-panel.classList.remove('hidden');
-panel.classList.add('flex');
-content.innerHTML += `<div class="mb-3 p-2 bg-zinc-800 rounded"><div class="text-xs text-blue-400 mb-1">${data.agent} - ${data.task}</div><div class="whitespace-pre-wrap">${data.content}</div></div>`;
-}
-
-function addMessage(from, text, type) {
-const feed = document.getElementById('transcript-feed');
-const div = document.createElement('div');
-div.className = `message-bubble ${type === 'log' ? 'text-zinc-400 text-sm mono' : 'text-zinc-200 text-sm'}`;
-if (AGENTS[from]) {
-div.innerHTML = `<span class="font-semibold" style="color:${AGENTS[from].color}">${AGENTS[from].name}:</span> ${text}`;
-drawConnections(from, 'board_chair');
-} else {
-div.innerHTML = `<span class="text-zinc-500">${text}</span>`;
-}
-feed.appendChild(div);
-feed.scrollTop = feed.scrollHeight;
-}
-
-// Start session
+// ── Start session ─────────────────────────────────────────────
 async function startSession() {
-const idea = document.getElementById('idea-input').value.trim();
-if (!idea) { alert('Enter an idea'); return; }
-const rounds = document.getElementById('rounds-input').value;
-document.getElementById('start-btn').disabled = true;
+  const idea = document.getElementById('idea-input').value.trim();
+  if (!idea) { alert('Enter an idea'); return; }
+  const rounds = document.getElementById('rounds-input').value;
+  document.getElementById('start-btn').disabled = true;
+  document.getElementById('status-display').textContent = 'Starting session...';
 
-const res = await fetch(`/api/start?idea=${encodeURIComponent(idea)}&rounds=${rounds}`, { method: 'POST' });
-const data = await res.json();
-currentSession = data.session_id;
+  const res = await fetch(`/api/start?idea=${encodeURIComponent(idea)}&rounds=${rounds}`, { method: 'POST' });
+  const data = await res.json();
+  currentSession = data.session_id;
 }
 
-// Load sessions
+// ── Load sessions ────────────────────────────────────────────
 async function loadSessions() {
-const res = await fetch('/api/sessions');
-const sessions = await res.json();
-const list = document.getElementById('session-list');
-if (!sessions.length) {
-list.innerHTML = '<div class="text-center text-xs text-zinc-600 mt-8">No sessions yet</div>';
-return;
-}
-list.innerHTML = sessions.map(s => `
-<div class="p-2 rounded bg-zinc-800/50 hover:bg-zinc-700 cursor-pointer text-xs" onclick="loadSessionDetail('${s.session_id}')">
-<div class="flex items-center justify-between">
-<span class="font-medium text-white truncate">${s.session_id}</span>
-<span class="text-zinc-500">${s.memo_count} memos</span>
-</div>
-${s.has_transcript ? '<span class="text-green-500">transcript</span>' : ''}
-</div>
-`).join('');
+  const res = await fetch('/api/sessions');
+  const sessions = await res.json();
+  const list = document.getElementById('session-list');
+  if (!sessions.length) {
+    list.innerHTML = '<div class="text-center text-xs text-zinc-600 mt-8">No sessions yet</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => `
+    <div class="p-2 rounded bg-zinc-800/50 hover:bg-zinc-700 cursor-pointer text-xs" onclick="loadSessionDetail('${s.session_id}')">
+      <div class="flex items-center justify-between">
+        <span class="font-medium text-white truncate">${s.session_id}</span>
+        <span class="text-zinc-500">${s.memo_count || 0} memos</span>
+      </div>
+      <div class="flex gap-2 mt-1">
+        ${s.has_events ? '<span class="text-blue-400">events</span>' : ''}
+        ${s.has_transcript ? '<span class="text-green-500">transcript</span>' : ''}
+      </div>
+    </div>
+  `).join('');
 }
 
+// ── Load & replay session ─────────────────────────────────────
 async function loadSessionDetail(id) {
-const res = await fetch(`/api/session/${id}`);
-const data = await res.json();
-if (data.files?.transcript) {
-document.getElementById('transcript-feed').innerHTML = data.files.transcript.split('\n').filter(l => l.trim()).map(l => `<div class="text-sm text-zinc-300 mb-1">${l}</div>`).join('');
-}
+  const res = await fetch(`/api/session/${id}`);
+  const data = await res.json();
+  currentSession = id;
+  document.getElementById('session-badge').textContent = id;
+  document.getElementById('session-badge').classList.remove('hidden');
+
+  const feed = document.getElementById('transcript-feed');
+  feed.innerHTML = '';
+  eventBuffer = [];
+
+  if (data.events && data.events.length) {
+    renderSystemBanner(`Replaying session: ${id}`, '\u{1F504}');
+    data.events.forEach(evt => handleEvent(evt));
+    renderSystemBanner('Replay complete', '\u{1F3C1}');
+  } else if (data.files && data.files.transcript) {
+    // Fallback: show raw transcript markdown
+    feed.innerHTML = data.files.transcript
+      .split('\n')
+      .filter(l => l.trim())
+      .map(l => `<div class="text-sm text-zinc-300 mb-1">${escapeHtml(l)}</div>`)
+      .join('');
+  } else {
+    renderSystemBanner('No data available for this session', '\u{1F4ED}');
+  }
+
+  document.getElementById('status-display').textContent = `Viewing: ${id}`;
 }
 
-// Agent highlighting
-function highlightAgent(key, state) {
-const el = document.getElementById(`agent-${key}`);
-if (el) { el.classList.add(state); el.querySelector('.agent-state').textContent = state === 'speaking' ? 'Speaking...' : 'Thinking...'; el.querySelector('.agent-state').classList.remove('hidden'); }
-}
-function unhighlightAgent(key) {
-const el = document.getElementById(`agent-${key}`);
-if (el) { el.classList.remove('speaking', 'thinking'); el.querySelector('.agent-state').classList.add('hidden'); }
-}
-
+// ── Focus agent in graph ──────────────────────────────────────
 function focusAgent(key) {
-const pos = positions[key];
-// Zoom to agent in graph
-const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
-circle.setAttribute('cx', pos.x);
-circle.setAttribute('cy', pos.y);
-circle.setAttribute('r', '40');
-circle.setAttribute('fill', 'none');
-circle.setAttribute('stroke', AGENTS[key].color);
-circle.setAttribute('stroke-width', '2');
-circle.setAttribute('opacity', '0.5');
-circle.innerHTML = '<animate attributeName="r" values="40;50;40" dur="2s" repeatCount="indefinite"/>';
-svg.appendChild(circle);
-setTimeout(() => circle.remove(), 3000);
+  if (!positions[key]) return;
+  const pos = positions[key];
+  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  circle.setAttribute('cx', pos.x);
+  circle.setAttribute('cy', pos.y);
+  circle.setAttribute('r', '40');
+  circle.setAttribute('fill', 'none');
+  circle.setAttribute('stroke', AGENTS[key].color);
+  circle.setAttribute('stroke-width', '2');
+  circle.setAttribute('opacity', '0.5');
+  circle.innerHTML = '<animate attributeName="r" values="40;50;40" dur="2s" repeatCount="indefinite"/>';
+  svg.appendChild(circle);
+  setTimeout(() => circle.remove(), 3000);
 }
 
-// Init
+// ── Init ──────────────────────────────────────────────────────
 connectSSE();
 loadSessions();
 </script>

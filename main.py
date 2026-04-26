@@ -14,7 +14,7 @@ import signal
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, List
 
 from crewai import Crew, LLM, Process
 from dotenv import load_dotenv
@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from agents import build_agents
 from callbacks import TranscriptLogger
 from config import OLLAMA_CLOUD_API_KEY, OLLAMA_CLOUD_BASE_URL, get_llm_config
+from event_logger import EventLogger
 from file_io import SessionWriter
 from tasks import build_tasks
 
@@ -90,11 +91,13 @@ def _run_round(
     agents: dict,
     logger: TranscriptLogger,
     writer: SessionWriter,
+    events: EventLogger,
     mock: bool = False,
 ) -> Any:
     """Execute a single deliberation round."""
 
     logger.on_round_start(round_num)
+    events.round_start(round_num)
 
     # Build task graph for this round
     tasks = build_tasks(agents, idea)
@@ -102,11 +105,14 @@ def _run_round(
     # In mock mode we bypass the Crew and return deterministic canned responses.
     if mock:
         print(f"[MOCK] Round {round_num} — returning canned outputs")
-        # We still write placeholder memos so the pipeline is testable.
         for t in tasks:
             output = t.output_pydantic.model_construct() if t.output_pydantic else "MOCK"
+            agent_name = t.agent.role
+            events.agent_say(agent_name, f"Delivering {t.description.split(chr(10))[0]}")
+            events.task_end(agent_name, t.description.split(chr(10))[0], str(output))
             writer.write_memo(t.description.split("\n")[0], t.agent.role, str(output))
         logger.on_round_end(round_num)
+        events.round_end(round_num)
         return "MOCK"
 
     # Assemble the crew and run
@@ -118,7 +124,13 @@ def _run_round(
     os.environ["OPENAI_API_KEY"] = OLLAMA_CLOUD_API_KEY or os.getenv("OPENAI_API_KEY", "")
     os.environ["OPENAI_BASE_URL"] = OLLAMA_CLOUD_BASE_URL
 
-    manager_llm = LLM(**get_llm_config("board_chair"))
+    events.chat(
+        from_agent="Board Chair",
+        to_agent=None,
+        message=f"The Chair calls the board to order. {len(crew_agents)} executives will interrogate the idea: '{idea}'",
+        context="round_start"
+    )
+
     crew = Crew(
         agents=crew_agents,
         tasks=tasks,
@@ -129,9 +141,37 @@ def _run_round(
         planning=False,
     )
 
+    # Log each task start
+    for t in tasks:
+        agent_name = t.agent.role
+        task_slug = t.description.split("\n")[0]
+        events.task_start(agent_name, task_slug)
+        events.agent_think(
+            agent_name,
+            f"[{task_slug}] Applying my expertise: {t.agent.goal}. Backstory: {t.agent.backstory[:100]}..."
+        )
+
     result = crew.kickoff(inputs={"idea": idea})
 
+    # Log each task result (best effort, result is a CrewOutput)
+    for idx, t in enumerate(tasks):
+        agent_name = t.agent.role
+        task_slug = t.description.split("\n")[0]
+        # Try to get the actual output from kickoff result
+        if hasattr(result, 'tasks_output') and idx < len(result.tasks_output):
+            task_output = result.tasks_output[idx]
+            if hasattr(task_output, 'raw'):
+                events.agent_say(agent_name, task_output.raw[:1500])
+                events.task_end(agent_name, task_slug, task_output.raw[:500])
+            else:
+                events.agent_say(agent_name, str(task_output)[:1500])
+                events.task_end(agent_name, task_slug, str(task_output)[:500])
+        else:
+            events.agent_say(agent_name, "[Task completed]")
+            events.task_end(agent_name, task_slug, "[Task completed - output not captured]")
+
     logger.on_round_end(round_num)
+    events.round_end(round_num)
     return result
 
 
@@ -165,6 +205,8 @@ def main() -> int:
     # Persistence + logging
     writer = SessionWriter(session_id, args.idea)
     logger = TranscriptLogger(writer)
+    events = EventLogger(session_id)
+    events.session_start(args.idea, args.rounds)
 
     # Graceful interrupt handler
     completed_rounds: List[int] = []
@@ -172,6 +214,7 @@ def main() -> int:
     def _signal_handler(sig: int, frame) -> None:
         print("\n\n[!] Interrupted by user.")
         logger.on_interrupt()
+        events.session_done()
         writer.snapshot_state(
             completed_tasks=[f"round_{r}" for r in completed_rounds]
         )
@@ -185,10 +228,11 @@ def main() -> int:
 
     # Run rounds
     for r in range(1, args.rounds + 1):
-        _run_round(r, args.idea, agents, logger, writer, mock=args.mock)
+        _run_round(r, args.idea, agents, logger, writer, events, mock=args.mock)
         completed_rounds.append(r)
 
     logger.on_session_end()
+    events.session_done()
     print(f"\n[OK] Session complete. Artifacts written to: {writer.root}")
     return 0
 
