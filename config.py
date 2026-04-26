@@ -31,13 +31,13 @@ class AgentConfig:
 # Model registry — deterministic fallback chains
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY: Dict[str, List[str]] = {
-    # Primary model: fallback chain (nearest available first)
     "openai/kimi-k2.6:cloud": ["openai/kimi-k2.5:cloud", "openai/gemma4:31b:cloud"],
-    "openai/gemma4:31b:cloud": ["openai/gemma4:27b:cloud", "openai/deepseek-v4:cloud"],
-    "openai/deepseek-v4-pro:cloud": ["openai/deepseek-v4:cloud", "openai/deepseek-v4-flash:cloud"],
-    "openai/glm-5.1:cloud": ["openai/glm-5:cloud", "openai/gemma4:27b:cloud"],
-    "openai/gemma4:27b:cloud": ["openai/gemma4:9b:cloud", "openai/deepseek-v4-flash:cloud"],
-    "openai/gemma4:9b:cloud": ["openai/gemma4:4b:cloud", "openai/deepseek-v4-flash:cloud"],
+    "openai/kimi-k2.5:cloud": ["openai/gemma4:31b:cloud", "openai/gemma4:27b:cloud"],
+    "openai/gemma4:31b:cloud": ["openai/gemma4:27b:cloud", "openai/kimi-k2.5:cloud"],
+    "openai/gemma4:27b:cloud": ["openai/gemma4:9b:cloud", "openai/gemma4:31b:cloud"],
+    "openai/gemma4:9b:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
+    "openai/glm-5.1:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
+    "openai/glm-5:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
 }
 
 # ---------------------------------------------------------------------------
@@ -58,8 +58,8 @@ AGENT_CONFIGS: Dict[str, AgentConfig] = {
     ),
     "cfo": AgentConfig(
         role="CFO",
-        model="openai/deepseek-v4-pro:cloud",
-        fallback_chain=MODEL_REGISTRY["openai/deepseek-v4-pro:cloud"],
+        model="openai/gemma4:31b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
         temperature=0.3,
     ),
     "cto": AgentConfig(
@@ -82,8 +82,8 @@ AGENT_CONFIGS: Dict[str, AgentConfig] = {
     ),
     "counsel": AgentConfig(
         role="Counsel",
-        model="openai/deepseek-v4-pro:cloud",
-        fallback_chain=MODEL_REGISTRY["openai/deepseek-v4-pro:cloud"],
+        model="openai/gemma4:31b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
         temperature=0.0,  # Pro-Max — analytical, no hallucination
         max_tokens=8192,
     ),
