@@ -6,6 +6,15 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from dotenv import load_dotenv
+
+load_dotenv()  # load .env before any config variables are read
+
+# Force OpenAI client to use Ollama Cloud base URL (CrewAI v1.x requirement)
+_ollama_base = os.getenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.com/v1")
+os.environ.setdefault("OPENAI_BASE_URL", _ollama_base)
+os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("OLLAMA_CLOUD_API_KEY", "")))
+
 
 @dataclass
 class AgentConfig:
@@ -23,12 +32,12 @@ class AgentConfig:
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY: Dict[str, List[str]] = {
     # Primary model: fallback chain (nearest available first)
-    "kimi-k2.6:cloud": ["kimi-k2.5:cloud", "gemma4:31b:cloud"],
-    "gemma4:31b:cloud": ["gemma4:27b:cloud", "deepseek-v4:cloud"],
-    "deepseek-v4-pro:cloud": ["deepseek-v4:cloud", "deepseek-v4-flash:cloud"],
-    "glm-5.1:cloud": ["glm-5:cloud", "gemma4:27b:cloud"],
-    "gemma4:27b:cloud": ["gemma4:9b:cloud", "deepseek-v4-flash:cloud"],
-    "gemma4:9b:cloud": ["gemma4:4b:cloud", "deepseek-v4-flash:cloud"],
+    "openai/kimi-k2.6:cloud": ["openai/kimi-k2.5:cloud", "openai/gemma4:31b:cloud"],
+    "openai/gemma4:31b:cloud": ["openai/gemma4:27b:cloud", "openai/deepseek-v4:cloud"],
+    "openai/deepseek-v4-pro:cloud": ["openai/deepseek-v4:cloud", "openai/deepseek-v4-flash:cloud"],
+    "openai/glm-5.1:cloud": ["openai/glm-5:cloud", "openai/gemma4:27b:cloud"],
+    "openai/gemma4:27b:cloud": ["openai/gemma4:9b:cloud", "openai/deepseek-v4-flash:cloud"],
+    "openai/gemma4:9b:cloud": ["openai/gemma4:4b:cloud", "openai/deepseek-v4-flash:cloud"],
 }
 
 # ---------------------------------------------------------------------------
@@ -37,44 +46,44 @@ MODEL_REGISTRY: Dict[str, List[str]] = {
 AGENT_CONFIGS: Dict[str, AgentConfig] = {
     "board_chair": AgentConfig(
         role="Board Chair",
-        model="kimi-k2.6:cloud",
-        fallback_chain=MODEL_REGISTRY["kimi-k2.6:cloud"],
+        model="openai/kimi-k2.6:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/kimi-k2.6:cloud"],
         temperature=0.3,
     ),
     "ceo": AgentConfig(
         role="CEO",
-        model="gemma4:31b:cloud",
-        fallback_chain=MODEL_REGISTRY["gemma4:31b:cloud"],
-        temperature=0.7,  # Expressive → can be overridden mid-flow if API supports
+        model="openai/gemma4:31b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
+        temperature=0.7,  # Expressive
     ),
     "cfo": AgentConfig(
         role="CFO",
-        model="deepseek-v4-pro:cloud",
-        fallback_chain=MODEL_REGISTRY["deepseek-v4-pro:cloud"],
+        model="openai/deepseek-v4-pro:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/deepseek-v4-pro:cloud"],
         temperature=0.3,
     ),
     "cto": AgentConfig(
         role="CTO",
-        model="glm-5.1:cloud",
-        fallback_chain=MODEL_REGISTRY["glm-5.1:cloud"],
+        model="openai/glm-5.1:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/glm-5.1:cloud"],
         temperature=0.3,
     ),
     "cro": AgentConfig(
         role="CRO",
-        model="gemma4:27b:cloud",
-        fallback_chain=MODEL_REGISTRY["gemma4:27b:cloud"],
+        model="openai/gemma4:27b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:27b:cloud"],
         temperature=0.6,  # Creative
     ),
     "customer": AgentConfig(
         role="Customer",
-        model="gemma4:9b:cloud",
-        fallback_chain=MODEL_REGISTRY["gemma4:9b:cloud"],
+        model="openai/gemma4:9b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:9b:cloud"],
         temperature=0.1,  # Direct / No-fluff
     ),
     "counsel": AgentConfig(
         role="Counsel",
-        model="deepseek-v4-pro:cloud",
-        fallback_chain=MODEL_REGISTRY["deepseek-v4-pro:cloud"],
+        model="openai/deepseek-v4-pro:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/deepseek-v4-pro:cloud"],
         temperature=0.0,  # Pro-Max — analytical, no hallucination
         max_tokens=8192,
     ),
@@ -97,9 +106,10 @@ BOARDROOM_OUTPUT_DIR = os.getenv("BOARDROOM_OUTPUT_DIR", "./boardroom")
 def get_llm_config(agent_key: str) -> Dict:
     """Return a dict ready for CrewAI LLM constructor."""
     cfg = AGENT_CONFIGS[agent_key]
+    api_key = os.getenv("OLLAMA_CLOUD_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     return {
         "model": cfg.model,
-        "api_key": OLLAMA_CLOUD_API_KEY,
+        "api_key": api_key,
         "base_url": OLLAMA_CLOUD_BASE_URL,
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,

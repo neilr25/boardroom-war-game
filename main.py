@@ -16,13 +16,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from crewai import Crew, Process
+from crewai import Crew, LLM, Process
+from dotenv import load_dotenv
 
 from agents import build_agents
 from callbacks import TranscriptLogger
-from config import OLLAMA_CLOUD_API_KEY
+from config import OLLAMA_CLOUD_API_KEY, OLLAMA_CLOUD_BASE_URL, get_llm_config
 from file_io import SessionWriter
 from tasks import build_tasks
+
+# Load .env before any config is read
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +110,23 @@ def _run_round(
         return "MOCK"
 
     # Assemble the crew and run
+    # Separate manager from agents list to avoid mutation across rounds
+    manager = agents["board_chair"]
+    crew_agents = [v for k, v in agents.items() if k != "board_chair"]
+    # Force env vars before Crew init to prevent defaulting to OpenAI
+    import os
+    os.environ["OPENAI_API_KEY"] = OLLAMA_CLOUD_API_KEY or os.getenv("OPENAI_API_KEY", "")
+    os.environ["OPENAI_BASE_URL"] = OLLAMA_CLOUD_BASE_URL
+
+    manager_llm = LLM(**get_llm_config("board_chair"))
     crew = Crew(
-        agents=[agents[k] for k in agents],
+        agents=crew_agents,
         tasks=tasks,
         process=Process.hierarchical,
+        manager_agent=manager,
+        manager_llm=manager_llm,
         verbose=True,
-        planning=True,
+        planning=False,
     )
 
     result = crew.kickoff(inputs={"idea": idea})
@@ -155,7 +170,7 @@ def main() -> int:
     completed_rounds: List[int] = []
 
     def _signal_handler(sig: int, frame) -> None:
-        print("\n\n⚠️  Interrupted by user.")
+        print("\n\n[!] Interrupted by user.")
         logger.on_interrupt()
         writer.snapshot_state(
             completed_tasks=[f"round_{r}" for r in completed_rounds]
