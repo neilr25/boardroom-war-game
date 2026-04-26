@@ -276,5 +276,5 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    # Use port 8085 to avoid conflicts with SearXNG on 8080
-    uvicorn.run(app, host="0.0.0.0", port=8085)
+    # Use port 8089 (avoid conflict with Docker on 8085)
+    uvicorn.run(app, host="0.0.0.0", port=8089)
