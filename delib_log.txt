@@ -1,0 +1,3 @@
+usage: main.py [-h] --idea IDEA [--rounds ROUNDS] [--session-id SESSION_ID]
+               [--dry-run] [--mock]
+main.py: error: unrecognized arguments: An AI concierge that books restaurant tables by calling venues with a realistic human voice
