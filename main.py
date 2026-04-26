@@ -124,8 +124,8 @@ def _run_round(
         tasks=tasks,
         process=Process.hierarchical,
         manager_agent=manager,
-        manager_llm=manager_llm,
-        verbose=True,
+        manager_llm=LLM(**get_llm_config("board_chair")),
+        verbose=False,
         planning=False,
     )
 

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boardroom War Game — Mission Control</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+.agent-card { transition: all 0.3s ease; border-left: 3px solid transparent; }
+.agent-card.speaking { border-left-color: #3b82f6; background: rgba(59,130,246,0.08); transform: scale(1.02); }
+.agent-card.thinking { border-left-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.message-bubble { animation: popIn 0.3s ease; }
+@keyframes popIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+.pulse-dot { animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+.conversation-connector { stroke-dasharray: 5; animation: dash 1s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -10; } }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #18181b; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+</style>
+</head>
+<body class="h-screen overflow-hidden">
+<!-- Header -->
+<header class="h-14 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur flex items-center justify-between px-6 z-50">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white font-bold text-sm">B</div>
+<h1 class="font-semibold text-sm tracking-wide">BOARDROOM WAR GAME</h1>
+<span id="connection-status" class="w-2 h-2 rounded-full bg-green-500 pulse-dot ml-2"></span>
+</div>
+<div class="flex items-center gap-4 text-xs text-zinc-400">
+<span id="session-badge" class="hidden px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">No Active Session</span>
+<button onclick="loadSessions()" class="hover:text-white transition">Refresh</button>
+</div>
+</header>
+
+<!-- Main Layout -->
+<div class="flex h-[calc(100vh-56px)]">
+<!-- Left: Session List -->
+<aside class="w-72 border-r border-zinc-800 bg-zinc-900 flex flex-col">
+<div class="p-4 border-b border-zinc-800">
+<h2 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Sessions</h2>
+<!-- New Session Form -->
+<div class="space-y-2">
+<input id="idea-input" type="text" placeholder="Enter startup idea..." class="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 transition">
+<div class="flex gap-2">
+<select id="rounds-input" class="px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-white focus:outline-none focus:border-blue-500">
+<option value="1">1 Round</option>
+<option value="2">2 Rounds</option>
+<option value="3">3 Rounds</option>
+</select>
+<button onclick="startSession()" id="start-btn" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2 px-4 rounded transition flex items-center justify-center gap-2">
+<span>Start Board</span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+</button>
+</div>
+</div>
+</div>
+<div id="session-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+<!-- Sessions injected here -->
+<div class="text-center text-xs text-zinc-500 mt-8">Loading sessions...</div>
+</div>
+</aside>
+
+<!-- Center: Conversation Stage -->
+<main class="flex-1 flex flex-col bg-zinc-950">
+<!-- Conversation Graph -->
+<div class="h-48 border-b border-zinc-800 bg-zinc-900/50 relative overflow-hidden">
+<svg id="conversation-graph" class="w-full h-full"></svg>
+<div class="absolute top-2 left-2 text-xs text-zinc-500 bg-black/40 px-2 py-1 rounded">Conversation Flow</div>
+</div>
+<!-- Transcript Feed -->
+<div id="transcript-feed" class="flex-1 overflow-y-auto p-4 space-y-3">
+<div class="text-center text-zinc-500 text-sm mt-20">
+<div class="w-16 h-16 mx-auto mb-4 border-2 border-dashed border-zinc-700 rounded-full flex items-center justify-center">
+<svg class="w-8 h-8 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"></path></svg>
+</div>
+<p>No boardroom session running.</p>
+<p class="text-xs mt-1 text-zinc-600">Enter an idea and click Start Board to begin deliberation.</p>
+</div>
+</div>
+<!-- Memo Preview -->
+<div id="memo-panel" class="h-64 border-t border-zinc-800 bg-zinc-900 hidden flex-col">
+<div class="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
+<span class="text-xs font-semibold text-zinc-400">Memos</span>
+<button onclick="document.getElementById('memo-panel').classList.add('hidden')" class="text-zinc-500 hover:text-white text-xs">Close</button>
+</div>
+<div id="memo-content" class="flex-1 overflow-y-auto p-4 text-sm text-zinc-300 mono"></div>
+</div>
+</main>
+
+<!-- Right: Agent Roster + Controls -->
+<aside class="w-80 border-l border-zinc-800 bg-zinc-900 flex flex-col">
+<div class="p-4 border-b border-zinc-800">
+<h2 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Board Members</h2>
+</div>
+<div id="agent-roster" class="flex-1 overflow-y-auto p-3 space-y-2">
+<!-- Agents injected here -->
+</div>
+<div class="border-t border-zinc-800 p-4">
+<div class="text-xs text-zinc-500 mb-2">Status</div>
+<div id="status-display" class="text-sm text-zinc-300">Idle</div>
+</div>
+</aside>
+</div>
+
+<script>
+// Agent config
+const AGENTS = {
+board_chair: { name: "Board Chair", model: "kimi-k2.6:cloud", color: "#ef4444", temp: "0.3", icon: "G" },
+ceo: { name: "CEO", model: "gemma4:31b:cloud", color: "#3b82f6", temp: "0.7", icon: "C" },
+cfo: { name: "CFO", model: "deepseek-v4-pro:cloud", color: "#f59e0b", temp: "0.3", icon: "F" },
+cto: { name: "CTO", model: "glm-5.1:cloud", color: "#8b5cf6", temp: "0.3", icon: "T" },
+cro: { name: "CRO", model: "gemma4:27b:cloud", color: "#ec4899", temp: "0.6", icon: "R" },
+customer: { name: "Customer", model: "gemma4:9b:cloud", color: "#10b981", temp: "0.1", icon: "U" },
+counsel: { name: "Counsel", model: "deepseek-v4-pro:cloud", color: "#6366f1", temp: "0.0", icon: "L" }
+};
+
+// Build roster
+const roster = document.getElementById('agent-roster');
+roster.innerHTML = Object.entries(AGENTS).map(([key, a]) => `
+<div id="agent-${key}" class="agent-card p-3 rounded-lg bg-zinc-800/50 backdrop-blur cursor-pointer hover:bg-zinc-800" onclick="focusAgent('${key}')">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded font-bold text-sm flex items-center justify-center" style="background:${a.color}22; color:${a.color}">
+${a.icon}
+</div>
+<div class="flex-1 min-w-0">
+<div class="text-sm font-medium text-white truncate">${a.name}</div>
+<div class="text-xs text-zinc-500 truncate mono">${a.model}</div>
+</div>
+<span class="text-xs text-zinc-600 tabular-nums">${a.temp}</span>
+</div>
+<div class="mt-2 text-xs text-zinc-600 agent-state hidden">Idle</div>
+</div>
+`).join('');
+
+// Conversation graph SVG
+const svg = document.getElementById('conversation-graph');
+const width = 800, height = 192;
+svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+const positions = {};
+Object.keys(AGENTS).forEach((key, i) => {
+const angle = (i / 7) * Math.PI * 2 - Math.PI / 2;
+positions[key] = {
+x: width/2 + Math.cos(angle) * 280,
+y: height/2 + Math.sin(angle) * 70
+};
+});
+
+// Draw nodes
+Object.entries(AGENTS).forEach(([key, a]) => {
+const pos = positions[key];
+const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+// Outer glow
+if (key === 'board_chair') {
+g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="28" fill="${a.color}" fill-opacity="0.15"><animate attributeName="r" values="28;32;28" dur="3s" repeatCount="indefinite"/></circle>`;
+}
+g.innerHTML += `<circle cx="${pos.x}" cy="${pos.y}" r="24" fill="${a.color}" fill-opacity="0.25" stroke="${a.color}" stroke-width="2"/>`;
+g.innerHTML += `<text x="${pos.x}" y="${pos.y}" text-anchor="middle" dy="0.35em" fill="white" font-size="12" font-weight="bold">${a.icon}</text>`;
+g.innerHTML += `<text x="${pos.x}" y="${pos.y+38}" text-anchor="middle" fill="#a1a1aa" font-size="10">${a.name}</text>`;
+svg.appendChild(g);
+});
+
+// Draw connecting lines
+function drawConnections(activeFrom, activeTo) {
+svg.querySelectorAll('.connector').forEach(el => el.remove());
+if (!activeFrom || !activeTo) return;
+const from = positions[activeFrom], to = positions[activeTo];
+const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+line.setAttribute('x1', from.x);
+line.setAttribute('y1', from.y);
+line.setAttribute('x2', to.x);
+line.setAttribute('y2', to.y);
+line.setAttribute('stroke', AGENTS[activeFrom].color);
+line.setAttribute('stroke-width', '2');
+line.setAttribute('class', 'connector conversation-connector');
+svg.appendChild(line);
+}
+
+// SSE
+let evtSource = null;
+function connectSSE() {
+const status = document.getElementById('connection-status');
+if (evtSource) evtSource.close();
+evtSource = new EventSource('/api/events');
+evtSource.onopen = () => { status.classList.remove('bg-red-500'); status.classList.add('bg-green-500'); };
+evtSource.onerror = () => { status.classList.remove('bg-green-500'); status.classList.add('bg-red-500'); };
+evtSource.onmessage = (e) => {
+const data = JSON.parse(e.data);
+if (data.type === 'session_start') handleSessionStart(data);
+if (data.type === 'log') handleLog(data);
+if (data.type === 'session_end') handleSessionEnd(data);
+if (data.type === 'memo_complete') handleMemo(data);
+};
+}
+
+// Session handling
+let currentSession = null;
+function handleSessionStart(data) {
+currentSession = data.session_id;
+document.getElementById('session-badge').textContent = data.session_id;
+document.getElementById('session-badge').classList.remove('hidden');
+document.getElementById('status-display').textContent = 'Running deliberation...';
+document.getElementById('transcript-feed').innerHTML = '';
+addMessage('system', `Session: ${data.session_id}\nIdea: ${data.idea}`, 'session-start');
+}
+
+function handleLog(data) {
+// Parse CrewAI log lines for agent names
+const text = data.data;
+const agentMatch = text.match(/Agent\s+(\w+)/i) || text.match(/\*\*\s*(CEO|CFO|CTO|CRO|Customer|Counsel|Board Chair)\s*\*\*/);
+if (agentMatch) {
+const agentKey = agentMatch[1].toLowerCase().replace(' ', '_');
+if (AGENTS[agentKey]) {
+highlightAgent(agentKey, 'speaking');
+setTimeout(() => unhighlightAgent(agentKey), 2000);
+}
+}
+// Extract transcript-worthy lines
+if (text.includes('[INFO]:') || text.includes('**') || text.includes('✅')|| text.includes('🗣️')) {
+addMessage('system', text, 'log');
+}
+}
+
+function handleSessionEnd(data) {
+document.getElementById('status-display').textContent = `Completed: ${data.status}`;
+document.getElementById('start-btn').disabled = false;
+loadSessions();
+}
+
+function handleMemo(data) {
+// Show memo preview in panel
+const panel = document.getElementById('memo-panel');
+const content = document.getElementById('memo-content');
+panel.classList.remove('hidden');
+panel.classList.add('flex');
+content.innerHTML += `<div class="mb-3 p-2 bg-zinc-800 rounded"><div class="text-xs text-blue-400 mb-1">${data.agent} - ${data.task}</div><div class="whitespace-pre-wrap">${data.content}</div></div>`;
+}
+
+function addMessage(from, text, type) {
+const feed = document.getElementById('transcript-feed');
+const div = document.createElement('div');
+div.className = `message-bubble ${type === 'log' ? 'text-zinc-400 text-sm mono' : 'text-zinc-200 text-sm'}`;
+if (AGENTS[from]) {
+div.innerHTML = `<span class="font-semibold" style="color:${AGENTS[from].color}">${AGENTS[from].name}:</span> ${text}`;
+drawConnections(from, 'board_chair');
+} else {
+div.innerHTML = `<span class="text-zinc-500">${text}</span>`;
+}
+feed.appendChild(div);
+feed.scrollTop = feed.scrollHeight;
+}
+
+// Start session
+async function startSession() {
+const idea = document.getElementById('idea-input').value.trim();
+if (!idea) { alert('Enter an idea'); return; }
+const rounds = document.getElementById('rounds-input').value;
+document.getElementById('start-btn').disabled = true;
+
+const res = await fetch(`/api/start?idea=${encodeURIComponent(idea)}&rounds=${rounds}`, { method: 'POST' });
+const data = await res.json();
+currentSession = data.session_id;
+}
+
+// Load sessions
+async function loadSessions() {
+const res = await fetch('/api/sessions');
+const sessions = await res.json();
+const list = document.getElementById('session-list');
+if (!sessions.length) {
+list.innerHTML = '<div class="text-center text-xs text-zinc-600 mt-8">No sessions yet</div>';
+return;
+}
+list.innerHTML = sessions.map(s => `
+<div class="p-2 rounded bg-zinc-800/50 hover:bg-zinc-700 cursor-pointer text-xs" onclick="loadSessionDetail('${s.session_id}')">
+<div class="flex items-center justify-between">
+<span class="font-medium text-white truncate">${s.session_id}</span>
+<span class="text-zinc-500">${s.memo_count} memos</span>
+</div>
+${s.has_transcript ? '<span class="text-green-500">transcript</span>' : ''}
+</div>
+`).join('');
+}
+
+async function loadSessionDetail(id) {
+const res = await fetch(`/api/session/${id}`);
+const data = await res.json();
+if (data.files?.transcript) {
+document.getElementById('transcript-feed').innerHTML = data.files.transcript.split('\n').filter(l => l.trim()).map(l => `<div class="text-sm text-zinc-300 mb-1">${l}</div>`).join('');
+}
+}
+
+// Agent highlighting
+function highlightAgent(key, state) {
+const el = document.getElementById(`agent-${key}`);
+if (el) { el.classList.add(state); el.querySelector('.agent-state').textContent = state === 'speaking' ? 'Speaking...' : 'Thinking...'; el.querySelector('.agent-state').classList.remove('hidden'); }
+}
+function unhighlightAgent(key) {
+const el = document.getElementById(`agent-${key}`);
+if (el) { el.classList.remove('speaking', 'thinking'); el.querySelector('.agent-state').classList.add('hidden'); }
+}
+
+function focusAgent(key) {
+const pos = positions[key];
+// Zoom to agent in graph
+const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+circle.setAttribute('cx', pos.x);
+circle.setAttribute('cy', pos.y);
+circle.setAttribute('r', '40');
+circle.setAttribute('fill', 'none');
+circle.setAttribute('stroke', AGENTS[key].color);
+circle.setAttribute('stroke-width', '2');
+circle.setAttribute('opacity', '0.5');
+circle.innerHTML = '<animate attributeName="r" values="40;50;40" dur="2s" repeatCount="indefinite"/>';
+svg.appendChild(circle);
+setTimeout(() => circle.remove(), 3000);
+}
+
+// Init
+connectSSE();
+loadSessions();
+</script>
+</body>
+</html>

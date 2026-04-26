@@ -1,0 +1,38 @@
+model_list:
+  - model_name: kimik2
+    litellm_params:
+      model: openai/kimi-k2.6:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+  - model_name: gemma4_31b
+    litellm_params:
+      model: openai/gemma4:31b:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+  - model_name: deepseek_v4_pro
+    litellm_params:
+      model: openai/deepseek-v4-pro:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+  - model_name: glm51
+    litellm_params:
+      model: openai/glm-5.1:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+  - model_name: gemma4_27b
+    litellm_params:
+      model: openai/gemma4:27b:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+  - model_name: gemma4_9b
+    litellm_params:
+      model: openai/gemma4:9b:cloud
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://ollama.com/v1
+temperature_map:
+  "openai/kimi-k2.6:cloud": 0.3
+  "openai/gemma4:31b:cloud": 0.7
+  "openai/deepseek-v4-pro:cloud": 0.3
+  "openai/glm-5.1:cloud": 0.3
+  "openai/gemma4:27b:cloud": 0.6
+  "openai/gemma4:9b:cloud": 0.1
