@@ -131,6 +131,7 @@ async def start_session(
     idea: str,
     rounds: int = 1,
     session_id: Optional[str] = None,
+    mock: bool = False,
 ) -> JSONResponse:
     """Start a boardroom simulation."""
     sid = session_id or f"dash-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -145,14 +146,14 @@ async def start_session(
     }
 
     # Fire subprocess
-    asyncio.create_task(_run_session(sid, idea, rounds))
+    asyncio.create_task(_run_session(sid, idea, rounds, mock))
     # Fire event tailer
     asyncio.create_task(_tail_events(sid, events_path))
 
     return JSONResponse({"session_id": sid, "status": "started"})
 
 
-async def _run_session(sid: str, idea: str, rounds: int) -> None:
+async def _run_session(sid: str, idea: str, rounds: int, mock: bool = False) -> None:
     """Run main.py in a subprocess."""
     _event_queue.put_nowait({
         "type": "session_start",
@@ -164,11 +165,12 @@ async def _run_session(sid: str, idea: str, rounds: int) -> None:
     env = os.environ.copy()
     env["BOARDROOM_OUTPUT_DIR"] = os.getenv("BOARDROOM_OUTPUT_DIR", "./boardroom")
 
+    cmd = [sys.executable, "main.py", "--idea", idea, "--rounds", str(rounds), "--session-id", sid]
+    if mock:
+        cmd.append("--mock")
+
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "main.py",
-        "--idea", idea,
-        "--rounds", str(rounds),
-        "--session-id", sid,
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
@@ -176,11 +178,14 @@ async def _run_session(sid: str, idea: str, rounds: int) -> None:
     )
 
     # Also stream stdout as raw log events for backward compat
-    while proc.stdout is not None:
+    while proc.stdout is not None and proc.returncode is None:
         try:
-            chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=0.5)
+            chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
         except asyncio.TimeoutError:
-            break
+            # No new stdout this second — check if process is still alive
+            if proc.returncode is not None:
+                break
+            continue
         if not chunk:
             break
         text = chunk.decode("utf-8", errors="ignore")
@@ -191,7 +196,13 @@ async def _run_session(sid: str, idea: str, rounds: int) -> None:
             "ts": datetime.now(timezone.utc).isoformat()
         })
 
-    await proc.wait()
+    # Ensure process finishes (may already be done)
+    if proc.returncode is None:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
     _sessions[sid]["status"] = "completed" if proc.returncode == 0 else "failed"
     await _event_queue.put({
         "type": "session_end",
