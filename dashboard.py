@@ -183,11 +183,10 @@ async def session_detail(session_id: str) -> Dict[str, Any]:
 # Static
 # ---------------------------------------------------------------------------
 
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
 static_dir = Path(__file__).parent / "static"
-
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8080)
+    # Use port 8085 to avoid conflicts with SearXNG on 8080
+    uvicorn.run(app, host="0.0.0.0", port=8085)
