@@ -131,7 +131,7 @@ async def start_session(
     idea: str,
     rounds: int = 1,
     session_id: Optional[str] = None,
-    mock: bool = False,
+    mock: bool = True,
     fast: bool = False,
 ) -> JSONResponse:
     """Start a boardroom simulation."""

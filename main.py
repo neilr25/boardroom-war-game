@@ -110,13 +110,15 @@ def _run_round(
 
     # In mock mode we bypass the Crew and return deterministic canned responses.
     if mock:
-        print(f"[MOCK] Round {round_num} — returning canned outputs")
-        for t in tasks:
-            output = t.output_pydantic.model_construct() if t.output_pydantic else "MOCK"
+        print(f"[MOCK] Round {round_num} — generating smart fake outputs")
+        from smart_mock import generate_smart_responses
+        responses = generate_smart_responses(idea, tasks)
+        for t, content in responses.items():
             agent_name = t.agent.role
-            events.agent_say(agent_name, f"Delivering {t.description.split(chr(10))[0]}")
-            events.task_end(agent_name, t.description.split(chr(10))[0], str(output))
-            writer.write_memo(t.description.split("\n")[0], t.agent.role, str(output))
+            task_slug = t.description.split("\n")[0]
+            events.agent_say(agent_name, content)
+            events.task_end(agent_name, task_slug, content[:200])
+            writer.write_memo(task_slug, agent_name, content)
         logger.on_round_end(round_num)
         events.round_end(round_num)
         return "MOCK"
