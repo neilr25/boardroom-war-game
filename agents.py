@@ -28,7 +28,7 @@ def build_agents() -> dict[str, Agent]:
                 "You are terse, direct, and allergic to waffle."
             ),
             llm=LLM(**get_llm_config("board_chair")),
-            allow_delegation=True,
+            allow_delegation=False,
             verbose=True,
         ),
         "ceo": Agent(

@@ -132,6 +132,7 @@ async def start_session(
     rounds: int = 1,
     session_id: Optional[str] = None,
     mock: bool = False,
+    fast: bool = False,
 ) -> JSONResponse:
     """Start a boardroom simulation."""
     sid = session_id or f"dash-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -146,14 +147,14 @@ async def start_session(
     }
 
     # Fire subprocess
-    asyncio.create_task(_run_session(sid, idea, rounds, mock))
+    asyncio.create_task(_run_session(sid, idea, rounds, mock, fast))
     # Fire event tailer
     asyncio.create_task(_tail_events(sid, events_path))
 
     return JSONResponse({"session_id": sid, "status": "started"})
 
 
-async def _run_session(sid: str, idea: str, rounds: int, mock: bool = False) -> None:
+async def _run_session(sid: str, idea: str, rounds: int, mock: bool = False, fast: bool = False) -> None:
     """Run main.py in a subprocess."""
     _event_queue.put_nowait({
         "type": "session_start",
@@ -168,6 +169,8 @@ async def _run_session(sid: str, idea: str, rounds: int, mock: bool = False) -> 
     cmd = [sys.executable, "main.py", "--idea", idea, "--rounds", str(rounds), "--session-id", sid]
     if mock:
         cmd.append("--mock")
+    if fast:
+        cmd.append("--fast")
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,

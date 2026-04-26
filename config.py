@@ -32,12 +32,11 @@ class AgentConfig:
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY: Dict[str, List[str]] = {
     "openai/kimi-k2.6:cloud": ["openai/kimi-k2.5:cloud", "openai/gemma4:31b:cloud"],
-    "openai/kimi-k2.5:cloud": ["openai/gemma4:31b:cloud", "openai/gemma4:27b:cloud"],
-    "openai/gemma4:31b:cloud": ["openai/gemma4:27b:cloud", "openai/kimi-k2.5:cloud"],
-    "openai/gemma4:27b:cloud": ["openai/gemma4:9b:cloud", "openai/gemma4:31b:cloud"],
-    "openai/gemma4:9b:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
-    "openai/glm-5.1:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
-    "openai/glm-5:cloud": ["openai/gemma4:27b:cloud", "openai/gemma4:31b:cloud"],
+    "openai/kimi-k2.5:cloud": ["openai/gemma4:31b:cloud", "openai/deepseek-v4-pro:cloud"],
+    "openai/gemma4:31b:cloud": ["openai/deepseek-v4-pro:cloud", "openai/kimi-k2.5:cloud"],
+    "openai/deepseek-v4-pro:cloud": ["openai/gemma4:31b:cloud", "openai/kimi-k2.5:cloud"],
+    "openai/glm-5.1:cloud": ["openai/gemma4:31b:cloud", "openai/deepseek-v4-pro:cloud"],
+    "openai/glm-5:cloud": ["openai/gemma4:31b:cloud", "openai/deepseek-v4-pro:cloud"],
 }
 
 # ---------------------------------------------------------------------------
@@ -64,31 +63,60 @@ AGENT_CONFIGS: Dict[str, AgentConfig] = {
     ),
     "cto": AgentConfig(
         role="CTO",
-        model="openai/glm-5.1:cloud",
-        fallback_chain=MODEL_REGISTRY["openai/glm-5.1:cloud"],
+        model="openai/gemma4:31b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
         temperature=0.3,
     ),
     "cro": AgentConfig(
         role="CRO",
-        model="openai/gemma4:27b:cloud",
-        fallback_chain=MODEL_REGISTRY["openai/gemma4:27b:cloud"],
+        model="openai/deepseek-v4-pro:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/deepseek-v4-pro:cloud"],
         temperature=0.6,  # Creative
     ),
     "customer": AgentConfig(
         role="Customer",
-        model="openai/gemma4:9b:cloud",
-        fallback_chain=MODEL_REGISTRY["openai/gemma4:9b:cloud"],
+        model="openai/gemma4:31b:cloud",
+        fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
         temperature=0.1,  # Direct / No-fluff
     ),
     "counsel": AgentConfig(
         role="Counsel",
         model="openai/gemma4:31b:cloud",
         fallback_chain=MODEL_REGISTRY["openai/gemma4:31b:cloud"],
-        temperature=0.0,  # Pro-Max — analytical, no hallucination
+        temperature=0.0,  # Pro-Max -- analytical, no hallucination
         max_tokens=8192,
     ),
 }
 
+# ---------------------------------------------------------------------------
+# Fast mode -- all agents use gemma4:31b for rapid testing
+# ---------------------------------------------------------------------------
+FAST_MODEL = "openai/gemma4:31b:cloud"
+FAST_FALLBACK = MODEL_REGISTRY[FAST_MODEL]
+
+FAST_AGENT_CONFIGS: Dict[str, AgentConfig] = {
+    key: AgentConfig(
+        role=cfg.role,
+        model=FAST_MODEL,
+        fallback_chain=FAST_FALLBACK,
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        max_rpm=cfg.max_rpm,
+    )
+    for key, cfg in AGENT_CONFIGS.items()
+}
+
+# Active config -- set by main.py --fast flag
+_ACTIVE_CONFIGS = AGENT_CONFIGS
+
+def set_fast_mode(enabled: bool) -> None:
+    """Toggle between full model diversity and fast mode."""
+    global _ACTIVE_CONFIGS
+    _ACTIVE_CONFIGS = FAST_AGENT_CONFIGS if enabled else AGENT_CONFIGS
+
+def get_agent_configs() -> Dict[str, AgentConfig]:
+    """Return the currently active agent configs (diverse or fast)."""
+    return _ACTIVE_CONFIGS
 # ---------------------------------------------------------------------------
 # Global settings
 # ---------------------------------------------------------------------------
@@ -105,7 +133,7 @@ BOARDROOM_OUTPUT_DIR = os.getenv("BOARDROOM_OUTPUT_DIR", "./boardroom")
 
 def get_llm_config(agent_key: str) -> Dict:
     """Return a dict ready for CrewAI LLM constructor."""
-    cfg = AGENT_CONFIGS[agent_key]
+    cfg = get_agent_configs()[agent_key]
     api_key = os.getenv("OLLAMA_CLOUD_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     return {
         "model": cfg.model,

@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 from agents import build_agents
 from callbacks import TranscriptLogger
-from config import OLLAMA_CLOUD_API_KEY, OLLAMA_CLOUD_BASE_URL, get_llm_config
+from config import OLLAMA_CLOUD_API_KEY, OLLAMA_CLOUD_BASE_URL, get_llm_config, set_fast_mode
 from event_logger import EventLogger
 from file_io import SessionWriter
 from tasks import build_tasks
@@ -64,6 +64,11 @@ def _cli() -> argparse.Namespace:
         action="store_true",
         help="Use mock LLM responses for testing (no API calls)",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use gemma4:9b for ALL agents (fast mode, ~3-5 min per round)",
+    )
     return parser.parse_args()
 
 
@@ -93,6 +98,7 @@ def _run_round(
     writer: SessionWriter,
     events: EventLogger,
     mock: bool = False,
+    fast: bool = False,
 ) -> Any:
     """Execute a single deliberation round."""
 
@@ -116,30 +122,29 @@ def _run_round(
         return "MOCK"
 
     # Assemble the crew and run
-    # Separate manager from agents list to avoid mutation across rounds
-    manager = agents["board_chair"]
-    crew_agents = [v for k, v in agents.items() if k != "board_chair"]
-    # Force env vars before Crew init to prevent defaulting to OpenAI
-    import os
-    os.environ["OPENAI_API_KEY"] = OLLAMA_CLOUD_API_KEY or os.getenv("OPENAI_API_KEY", "")
-    os.environ["OPENAI_BASE_URL"] = OLLAMA_CLOUD_BASE_URL
-
-    events.chat(
-        from_agent="Board Chair",
-        to_agent=None,
-        message=f"The Chair calls the board to order. {len(crew_agents)} executives will interrogate the idea: '{idea}'",
-        context="round_start"
-    )
-
-    crew = Crew(
-        agents=crew_agents,
-        tasks=tasks,
-        process=Process.hierarchical,
-        manager_agent=manager,
-        manager_llm=LLM(**get_llm_config("board_chair")),
-        verbose=False,
-        planning=False,
-    )
+    # For fast mode use sequential process to avoid manager delegation issues
+    if fast:
+        crew_agents = list(agents.values())
+        crew = Crew(
+            agents=crew_agents,
+            tasks=tasks,
+            process=Process.sequential,
+            verbose=False,
+            planning=False,
+        )
+    else:
+        # Separate manager from agents list to avoid mutation across rounds
+        manager = agents["board_chair"]
+        crew_agents = [v for k, v in agents.items() if k != "board_chair"]
+        crew = Crew(
+            agents=crew_agents,
+            tasks=tasks,
+            process=Process.hierarchical,
+            manager_agent=manager,
+            manager_llm=LLM(**get_llm_config("board_chair")),
+            verbose=False,
+            planning=False,
+        )
 
     # Log each task start
     for t in tasks:
@@ -181,6 +186,11 @@ def _run_round(
 
 def main() -> int:
     args = _cli()
+
+    # Fast mode: override all models to gemma4:9b
+    if args.fast:
+        print("[FAST MODE] All agents using gemma4:9b for rapid testing")
+        set_fast_mode(True)
 
     # API key check (skip for dry-run)
     if not args.dry_run and not args.mock and not OLLAMA_CLOUD_API_KEY:
@@ -228,7 +238,7 @@ def main() -> int:
 
     # Run rounds
     for r in range(1, args.rounds + 1):
-        _run_round(r, args.idea, agents, logger, writer, events, mock=args.mock)
+        _run_round(r, args.idea, agents, logger, writer, events, mock=args.mock, fast=args.fast)
         completed_rounds.append(r)
 
     logger.on_session_end()

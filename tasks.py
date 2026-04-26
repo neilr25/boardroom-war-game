@@ -37,17 +37,17 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
     # ---- 1. Opening Pitch -------------------------------------------------
     opening_pitch = Task(
         description=(
-            f"Deliver the Opening Pitch for the idea: **{idea}**\n\n"
-            "Rubric:\n"
-            "- Define the problem being solved\n"
-            "- Explain your solution in one compelling paragraph\n"
-            "- State 'The Ask' (funding amount requested + runway)\n"
-            "- Rate your own confidence 1-5\n"
-            "- Keep under 300 words but make it memorable"
+            f"CEO, deliver the Opening Pitch for the idea: **{idea}**\n\n"
+            "You are the CEO pitching to the board. Deliver a compelling 5-section pitch:\n\n"
+            "**headline**: One-sentence summary of the pitch\n"
+            "**problem**: What pain-point is being solved\n"
+            "**solution**: How the startup solves it — one compelling paragraph\n"
+            "**the_ask**: Funding amount requested and runway\n"
+            "**confidence**: Your own confidence level, rated 1-5 (integer)\n\n"
+            "Keep under 300 words but make it memorable. Return as plain sections with bold headers, NOT as JSON code block."
         ),
-        expected_output="A structured OpeningPitchOutput JSON.",
+        expected_output="A compelling opening pitch covering problem, solution, ask, and confidence.",
         agent=agents["ceo"],
-        output_pydantic=OpeningPitchOutput,
     )
 
     # ---- 2. Technical Cross-Exam ------------------------------------------
@@ -62,10 +62,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Flag any deal-killing technical risks\n\n"
             "Be brutal. The CEO's feelings are not your concern."
         ),
-        expected_output="A structured TechnicalCrossExamOutput JSON.",
+        expected_output="A detailed technical analysis with red_flags and deal_killer verdict.",
         agent=agents["cto"],
         context=[opening_pitch],
-        output_pydantic=TechnicalCrossExamOutput,
     )
 
     # ---- 3. Financial Stress-Test -----------------------------------------
@@ -80,10 +79,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Flag any financial deal-killers\n\n"
             "Use the calculator tool if you need to run numbers."
         ),
-        expected_output="A structured FinancialStressTestOutput JSON.",
+        expected_output="A detailed financial stress-test with burn rate, revenue projections, and deal_killer verdict.",
         agent=agents["cfo"],
         context=[opening_pitch],
-        output_pydantic=FinancialStressTestOutput,
     )
 
     # ---- 4. GTM Analysis --------------------------------------------------
@@ -99,10 +97,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Flag any GTM deal-killers\n\n"
             "Demand specifics, not hand-waving."
         ),
-        expected_output="A structured GTMAnalysisOutput JSON.",
+        expected_output="A detailed GTM analysis with channels, K-factor, and deal_killer verdict.",
         agent=agents["cro"],
         context=[opening_pitch],
-        output_pydantic=GTMAnalysisOutput,
     )
 
     # ---- 5. Customer Reality Check ----------------------------------------
@@ -117,10 +114,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Flag any customer-side deal-killers\n\n"
             "Be the skeptic. You buy tools, not hype."
         ),
-        expected_output="A structured CustomerRealityCheckOutput JSON.",
+        expected_output="A detailed customer reality check with objections and deal_killer verdict.",
         agent=agents["customer"],
         context=[opening_pitch],
-        output_pydantic=CustomerRealityCheckOutput,
     )
 
     # ---- 6. Risk Audit ----------------------------------------------------
@@ -136,10 +132,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Flag any regulatory deal-killers\n\n"
             "Find the one clause that kills this deal."
         ),
-        expected_output="A structured RiskAuditOutput JSON.",
+        expected_output="A detailed risk audit with regulatory_matrix and deal_killer verdict.",
         agent=agents["counsel"],
         context=[opening_pitch],
-        output_pydantic=RiskAuditOutput,
     )
 
     # ---- 7. Closing Rebuttal ---------------------------------------------
@@ -156,10 +151,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Keep the tone confident but not delusional\n\n"
             "This is your last chance to save the deal."
         ),
-        expected_output="A structured ClosingRebuttalOutput JSON.",
+        expected_output="A detailed closing rebuttal addressing top 3 objections with confidence_delta.",
         agent=agents["ceo"],
         context=[tech_exam, financial_test, gtm, customer_check, risk_audit],
-        output_pydantic=ClosingRebuttalOutput,
     )
 
     # ---- 8. Final Resolution ---------------------------------------------
@@ -178,10 +172,9 @@ def build_tasks(agents: dict, idea: str) -> list[Task]:
             "- Vote tally: counts for APPROVE / REJECT / CONDITIONAL\n\n"
             "Your word is final. Be decisive."
         ),
-        expected_output="A structured ResolutionOutput JSON.",
+        expected_output="A detailed resolution with verdict, risk_level, and vote tally.",
         agent=agents["board_chair"],
         context=[opening_pitch, tech_exam, financial_test, gtm, customer_check, risk_audit, closing],
-        output_pydantic=ResolutionOutput,
     )
 
     return [

@@ -59,8 +59,8 @@ body { font-family: 'Inter', sans-serif; background: #0f0f13; color: #e4e4e7; }
               </button>
             </div>
             <label class="flex items-center gap-2 text-xs text-zinc-400 mt-2 cursor-pointer">
-              <input type="checkbox" id="mock-mode" class="accent-blue-500" checked>
-              <span>Mock mode (no API calls, instant demo)</span>
+              <input type="checkbox" id="fast-mode" class="accent-blue-500" checked>
+              <span>Fast mode (gemma4:9b for all agents, ~3-5 min)</span>
             </label>
 </div>
 </div>
@@ -420,11 +420,11 @@ function connectSSE() {
               const idea = document.getElementById('idea-input').value.trim();
               if (!idea) { alert('Enter an idea'); return; }
               const rounds = document.getElementById('rounds-input').value;
-              const mock = document.getElementById('mock-mode').checked;
+              const fast = document.getElementById('fast-mode').checked;
               document.getElementById('start-btn').disabled = true;
-              document.getElementById('status-display').textContent = mock ? 'Running mock session...' : 'Running live API session (may take 10-30 min)...';
+              document.getElementById('status-display').textContent = fast ? 'Running fast mode (gemma4:9b)...' : 'Running full deliberation (diverse models)...';
 
-              const res = await fetch(`/api/start?idea=${encodeURIComponent(idea)}&amp;rounds=${rounds}&amp;mock=${mock}`, { method: 'POST' });
+              const res = await fetch(`/api/start?idea=${encodeURIComponent(idea)}&amp;rounds=${rounds}&amp;fast=${fast}`, { method: 'POST' });
               const data = await res.json();
               currentSession = data.session_id;
             }
