@@ -1,12 +1,13 @@
-"""Swarm 1: Dynamic Swarm — AgentSpawn-inspired
+"""Swarm 1: Dynamic Swarm — AgentSpawn-inspired (human-in-the-loop)
 
 Board Chair ANALYSES the idea, DYNAMICALLY DECIDES which specialists to summon.
 Only summoned agents participate. Agents can REQUEST_SUBAGENT for deep dives.
 Chair can RECALL agents for follow-up questions.
+Chair can ASK human directly (via RECALL: human_founder - question).
 The roster changes per idea — NOT a fixed pipeline.
 """
 from __future__ import annotations
-import asyncio, json, os, re, sys, importlib
+import asyncio, json, os, re, sys, importlib, uuid
 from datetime import datetime, timezone
 import httpx
 
@@ -14,7 +15,8 @@ import httpx
 _parent = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
-from shared_llm import EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY
+from shared_llm import (EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY,
+                        HumanSession, HumanGate, resume_human)
 
 # Load agents from THIS directory using direct import to avoid parent shadow
 _this = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +24,55 @@ _import_spec = importlib.util.spec_from_file_location("swarm1_agents", os.path.j
 _swarm1_agents = importlib.util.module_from_spec(_import_spec)
 _import_spec.loader.exec_module(_swarm1_agents)
 BASE_AGENTS = _swarm1_agents.BASE_AGENTS
+
+# Add human as a special "virtual" agent for the Chair's RECALL
+HUMAN_AGENT_KEY = "human_founder"
+HUMAN_AGENT = {
+    "name": "Human Founder",
+    "emoji": "👤",
+    "color": "#64748b",
+    "model": DEFAULT_MODEL,
+    "temperature": 0.5,
+    "system": (
+        "You are the human founder pitching the startup idea. "
+        "You answer questions from the board directly and factually. "
+        "You are NOT the CEO agent — you are the actual person behind the pitch. "
+        "When the Chair RECALLs you, answer the specific question asked."
+    ),
+}
+
+# The orchestrator calls this when it needs a human answer.
+# It sets the session to awaiting_human, emits a human_gate event,
+# and polls until resume_human is called.
+async def _await_human(session, phase: str, question: str, emitter, session_id: str) -> str:
+    gate_id = f"hg-{uuid.uuid4().hex[:8]}"
+    gate = HumanGate(gate_id=gate_id, target_role=session.user_role,
+                      question=question, phase=phase)
+    async with session._lock:
+        session.status = "awaiting_human"
+        session.pending_gate = gate
+
+    if emitter:
+        emitter.emit({
+            "type": "human_gate",
+            "gate_id": gate_id,
+            "target_role": session.user_role,
+            "question": question,
+            "phase": phase,
+            "user_role": session.user_role,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+        })
+
+    # Poll until resume
+    while True:
+        await asyncio.sleep(0.5)
+        async with session._lock:
+            if session.status != "awaiting_human":
+                for entry in reversed(session.transcript):
+                    if entry.get("gate_id") == gate_id:
+                        return entry["content"]
+                return ""
 
 def _parse_summons(text):
     """Extract which agents the Chair wants to summon."""
@@ -57,12 +108,18 @@ def _parse_recalls(text):
     return recalls
 
 
-async def run_deliberation(idea, session_id, session_dir, emitter=None):
+async def run_deliberation(idea, session_id, session_dir, emitter=None, human_session=None):
+    """
+    human_session: HumanSession object if human-in-the-loop, else None.
+    When human_session is provided, the Chair can RECALL the human directly
+    and the user's output_expectations shape the resolution prompt.
+    """
     os.makedirs(session_dir, exist_ok=True)
     context_parts = []
     all_outputs = {}
     active_agents = {"board_chair": BASE_AGENTS["board_chair"]}
     dynamic_agents = {}
+    use_human = human_session is not None
 
     def emit(ev):
         ev["ts"] = datetime.now(timezone.utc).isoformat()
@@ -162,11 +219,14 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
         ctx = "\n\n".join(context_parts)
         followup = await run_agent(client, "board_chair", BASE_AGENTS["board_chair"]["system"],
             "Based on the cross-exams, RECALL any agent with a follow-up question? "
-            "Format: RECALL: [agent name] - [question]. Or say PROCEED TO REBUTTAL.",
+            "Format: RECALL: [agent name] - [question]. Or say PROCEED TO REBUTTAL.\n"
+            "IMPORTANT: If you need facts only the founder can provide (unit economics, differentiation, roadmap), "
+            "RECALL the human founder.",
             ctx, emitter=emitter, session_id=session_id, agent_name="Board Chair")
         context_parts.append(f"## Board Chair (Follow-up)\n{followup}")
         all_outputs.setdefault("board_chair", []).append(followup)
 
+        # Handle RECALLS — including human founder
         for ak, question in _parse_recalls(followup):
             if ak in active_agents:
                 recall_resp = await run_agent(client, ak, BASE_AGENTS[ak]["system"],
@@ -175,6 +235,24 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
                     temperature=BASE_AGENTS[ak]["temperature"])
                 context_parts.append(f"## {BASE_AGENTS[ak]['name']} (Follow-up)\n{recall_resp}")
                 all_outputs.setdefault(ak, []).append(recall_resp)
+
+        # Human founder RECALL — pause and ask user
+        if use_human:
+            human_recalls = [q for (ak, q) in _parse_recalls(followup) if ak == HUMAN_AGENT_KEY or HUMAN_AGENT_KEY in ak]
+            if not human_recalls:
+                # Also check raw text for "RECALL: human" patterns
+                for line in followup.split("\n"):
+                    if "RECALL:" in line.upper() and "human" in line.lower():
+                        m = re.search(r"RECALL:\s*.+?\s*[-–]\s*(.+)", line, re.IGNORECASE)
+                        if m:
+                            human_recalls.append(m.group(1).strip())
+                        else:
+                            human_recalls.append("Please answer the board's question about your startup.")
+
+            for question in human_recalls[:2]:  # max 2 human pauses per session
+                answer = await _await_human(human_session, "followup", question, emitter, session_id)
+                context_parts.append(f"## {human_session.user_role}\n{answer}")
+                all_outputs.setdefault(HUMAN_AGENT_KEY, []).append(answer)
 
         emit({"type": "phase_end", "phase": "followup"})
 
@@ -189,10 +267,18 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
         emit({"type": "phase_end", "phase": "rebuttal"})
 
         # === PHASE 6: Chair resolution ===
+        resolution_prompt_suffix = ""
+        if use_human and human_session.output_expectations:
+            resolution_prompt_suffix = (
+                f"\n\nUser's requested output format: **{human_session.output_expectations}**. "
+                "Format your final resolution to match this expectation precisely."
+            )
+
         emit({"type": "phase_start", "phase": "resolution", "label": "Final Resolution"})
         ctx = "\n\n".join(context_parts)
         resolution = await run_agent(client, "board_chair", BASE_AGENTS["board_chair"]["system"],
-            "Issue Final Resolution. APPROVED/REJECTED/CONDITIONAL, funding, risk, vote tally. 300-500 words.",
+            "Issue Final Resolution. APPROVED/REJECTED/CONDITIONAL, funding, risk, vote tally. 300-500 words."
+            + resolution_prompt_suffix,
             ctx, emitter=emitter, session_id=session_id, agent_name="Board Chair")
         context_parts.append(f"## Board Chair (Resolution)\n{resolution}")
         all_outputs.setdefault("board_chair", []).append(resolution)

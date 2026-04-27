@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boardroom War Game</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — Dark Boardroom
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* Surface hierarchy */
+  --bg-deep:      #0a0a0f;
+  --bg-base:      #111118;
+  --bg-elevated:  #1a1a24;
+  --bg-card:      #1e1e2a;
+  --bg-hover:     #252535;
+
+  /* Text hierarchy */
+  --text-primary:   #e8e8f0;
+  --text-secondary: #8888a0;
+  --text-muted:    #55556a;
+  --text-accent:   #c0c0d8;
+
+  /* Borders */
+  --border-subtle:  #2a2a3a;
+  --border-default: #3a3a4e;
+  --border-strong:  #4a4a60;
+
+  /* Swarm accents */
+  --swarm1: #4a9eff;  /* Dynamic — electric blue */
+  --swarm1-dim: #2a5a9e;
+  --swarm1-glow: rgba(74,158,255,0.15);
+  --swarm2: #34d399;  /* Organic — emerald green */
+  --swarm2-dim: #1a7a55;
+  --swarm2-glow: rgba(52,211,153,0.15);
+  --swarm3: #a78bfa;  /* Self-Generating — amethyst purple */
+  --swarm3-dim: #6b4fcf;
+  --swarm3-glow: rgba(167,139,250,0.15);
+
+  /* Semantic */
+  --human-gate: #fbbf24;
+  --human-gate-dim: #92710e;
+  --human-gate-glow: rgba(251,191,36,0.12);
+  --error: #ef4444;
+  --success: #22c55e;
+
+  /* Spacing scale (4px base) */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+  --sp-12: 48px; --sp-16: 64px;
+
+  /* Typography */
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Transitions */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+/* Noise texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════════════════════════ */
+.screen {
+  display: none;
+  min-height: 100vh;
+  animation: screenIn 0.5s var(--ease-out);
+}
+.screen.active { display: flex; flex-direction: column; }
+
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCREEN 1 — CONFIG
+   ═══════════════════════════════════════════════════════════════ */
+.config-screen {
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-8);
+  position: relative;
+}
+
+.config-screen::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 800px;
+  height: 800px;
+  background: radial-gradient(circle, var(--swarm1-glow) 0%, transparent 70%);
+  pointer-events: none;
+  opacity: 0.5;
+  transition: background var(--duration-slow) var(--ease-out);
+}
+
+.config-screen[data-accent="swarm2"]::after { background: radial-gradient(circle, var(--swarm2-glow) 0%, transparent 70%); }
+.config-screen[data-accent="swarm3"]::after { background: radial-gradient(circle, var(--swarm3-glow) 0%, transparent 70%); }
+
+.config-container {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 640px;
+}
+
+.config-header {
+  text-align: center;
+  margin-bottom: var(--sp-10);
+}
+
+.config-header h1 {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-bottom: var(--sp-2);
+}
+
+.config-header p {
+  color: var(--text-secondary);
+  font-size: 1rem;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.form-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.form-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.form-input,
+.form-textarea {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  outline: none;
+}
+
+.form-input:focus,
+.form-textarea:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px rgba(74,158,255,0.1);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.5;
+}
+
+/* Role picker */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--sp-2);
+}
+
+.role-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-2);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  text-align: center;
+}
+
+.role-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.role-btn.selected {
+  background: var(--bg-card);
+  border-color: var(--swarm1);
+  color: var(--text-primary);
+  box-shadow: 0 0 12px var(--swarm1-glow);
+}
+
+.config-screen[data-accent="swarm2"] .role-btn.selected { border-color: var(--swarm2); box-shadow: 0 0 12px var(--swarm2-glow); }
+.config-screen[data-accent="swarm3"] .role-btn.selected { border-color: var(--swarm3); box-shadow: 0 0 12px var(--swarm3-glow); }
+
+/* Swarm picker */
+.swarm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-3);
+}
+
+.swarm-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5) var(--sp-4);
+  cursor: pointer;
+  transition: all var(--duration-base) var(--ease-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.swarm-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--swarm1);
+  opacity: 0;
+  transition: opacity var(--duration-base);
+}
+
+.swarm-card[data-swarm="swarm2"]::before { background: var(--swarm2); }
+.swarm-card[data-swarm="swarm3"]::before { background: var(--swarm3); }
+
+.swarm-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  transform: translateY(-2px);
+}
+
+.swarm-card.selected {
+  border-color: var(--swarm1);
+  background: var(--bg-card);
+  box-shadow: 0 4px 24px var(--swarm1-glow);
+}
+
+.swarm-card[data-swarm="swarm2"].selected { border-color: var(--swarm2); box-shadow: 0 4px 24px var(--swarm2-glow); }
+.swarm-card[data-swarm="swarm3"].selected { border-color: var(--swarm3); box-shadow: 0 4px 24px var(--swarm3-glow); }
+
+.swarm-card.selected::before { opacity: 1; }
+
+.swarm-card .swarm-name {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin-bottom: var(--sp-1);
+}
+
+.swarm-card .swarm-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: var(--sp-2);
+}
+
+.swarm-card[data-swarm="swarm1"] .swarm-tag { color: var(--swarm1); }
+.swarm-card[data-swarm="swarm2"] .swarm-tag { color: var(--swarm2); }
+.swarm-card[data-swarm="swarm3"] .swarm-tag { color: var(--swarm3); }
+
+.swarm-card .swarm-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* Submit button */
+.btn-start {
+  background: var(--swarm1);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-4) var(--sp-8);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-start:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-start:active { transform: translateY(0); }
+.btn-start:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.config-screen[data-accent="swarm2"] .btn-start { background: var(--swarm2); color: #0a0a0f; }
+.config-screen[data-accent="swarm3"] .btn-start { background: var(--swarm3); }
+
+.btn-start .spinner {
+  display: none;
+  width: 18px; height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: var(--sp-2);
+}
+
+.btn-start.loading .spinner { display: inline-block; }
+.btn-start.loading .btn-text { opacity: 0.7; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══════════════════════════════════════════════════════════════
+   SCREEN 2 — LIVE STREAM
+   ═══════════════════════════════════════════════════════════════ */
+.stream-screen {
+  position: relative;
+}
+
+.stream-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-4) var(--sp-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.stream-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.stream-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+.stream-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.stream-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stream-badge.swarm1 { background: var(--swarm1-glow); color: var(--swarm1); border: 1px solid var(--swarm1-dim); }
+.stream-badge.swarm2 { background: var(--swarm2-glow); color: var(--swarm2); border: 1px solid var(--swarm2-dim); }
+.stream-badge.swarm3 { background: var(--swarm3-glow); color: var(--swarm3); border: 1px solid var(--swarm3-dim); }
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background var(--duration-base);
+}
+
+.status-dot.live { background: var(--success); animation: pulse-dot 2s ease-in-out infinite; }
+.status-dot.awaiting { background: var(--human-gate); animation: pulse-dot 1s ease-in-out infinite; }
+.status-dot.error { background: var(--error); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.btn-new {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.btn-new:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
+
+/* Stream body */
+.stream-body {
+  flex: 1;
+  padding: var(--sp-6);
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-bottom: 120px;
+}
+
+/* Event cards */
+.event-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5);
+  animation: cardIn 0.4s var(--ease-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.event-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  background: var(--border-default);
+  transition: background var(--duration-base);
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.event-card.phase_start::before { background: var(--text-secondary); }
+.event-card.phase_end::before { background: var(--text-muted); }
+.event-card.agent_say::before { background: var(--swarm1); }
+.event-card.agent_think::before { background: var(--text-muted); }
+.event-card.human_gate::before { background: var(--human-gate); }
+.event-card.session_done::before { background: var(--success); }
+.event-card.error::before { background: var(--error); }
+
+.event-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.event-card-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.event-card-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.event-card-time {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.event-card-body {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.event-card-body p { margin-bottom: var(--sp-2); }
+.event-card-body p:last-child { margin-bottom: 0; }
+
+/* Phase cards */
+.event-card.phase_start {
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  text-align: center;
+  padding: var(--sp-4) var(--sp-6);
+}
+
+.event-card.phase_start .event-card-title {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.event-card.phase_end {
+  background: transparent;
+  border: none;
+  padding: var(--sp-2) 0;
+  text-align: center;
+}
+
+.event-card.phase_end .event-card-title {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* Agent cards */
+.event-card.agent_say {
+  border-color: var(--border-default);
+}
+
+.event-card.agent_say .event-card-title {
+  color: var(--text-primary);
+}
+
+.event-card.agent_think .event-card-body {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+/* Human gate card */
+.event-card.human_gate {
+  border-color: var(--human-gate);
+  background: linear-gradient(135deg, var(--bg-card) 0%, var(--human-gate-glow) 100%);
+  box-shadow: 0 0 30px var(--human-gate-glow), 0 0 60px rgba(251,191,36,0.05);
+  animation: cardIn 0.4s var(--ease-out), gatePulse 2s ease-in-out infinite;
+}
+
+@keyframes gatePulse {
+  0%, 100% { box-shadow: 0 0 30px var(--human-gate-glow), 0 0 60px rgba(251,191,36,0.05); }
+  50% { box-shadow: 0 0 40px var(--human-gate-glow), 0 0 80px rgba(251,191,36,0.1); }
+}
+
+.event-card.human_gate .event-card-title {
+  color: var(--human-gate);
+  font-size: 0.85rem;
+}
+
+.event-card.human_gate .event-card-icon {
+  font-size: 1.4rem;
+}
+
+.human-gate-question {
+  font-size: 1.05rem;
+  color: var(--text-primary);
+  margin: var(--sp-3) 0;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.human-gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.human-gate-form textarea {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+  transition: border-color var(--duration-fast);
+}
+
+.human-gate-form textarea:focus {
+  border-color: var(--human-gate);
+  box-shadow: 0 0 0 3px rgba(251,191,36,0.1);
+}
+
+.btn-respond {
+  align-self: flex-start;
+  background: var(--human-gate);
+  color: #0a0a0f;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-6);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.btn-respond:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-respond:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.btn-respond .spinner {
+  display: none;
+  width: 16px; height: 16px;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-top-color: #0a0a0f;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: var(--sp-1);
+}
+
+.btn-respond.loading .spinner { display: inline-block; }
+
+/* Session done card */
+.event-card.session_done {
+  border-color: var(--success);
+  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(34,197,94,0.08) 100%);
+}
+
+.event-card.session_done .event-card-title {
+  color: var(--success);
+}
+
+/* Resolution card */
+.event-card.resolution {
+  border-color: var(--swarm1);
+  background: linear-gradient(135deg, var(--bg-card) 0%, var(--swarm1-glow) 100%);
+}
+
+.stream-screen[data-swarm="swarm2"] .event-card.resolution { border-color: var(--swarm2); background: linear-gradient(135deg, var(--bg-card) 0%, var(--swarm2-glow) 100%); }
+.stream-screen[data-swarm="swarm3"] .event-card.resolution { border-color: var(--swarm3); background: linear-gradient(135deg, var(--bg-card) 0%, var(--swarm3-glow) 100%); }
+
+/* Error card */
+.event-card.error {
+  border-color: var(--error);
+}
+
+.event-card.error .event-card-title { color: var(--error); }
+
+/* Loading state */
+.stream-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  padding: var(--sp-16) 0;
+  color: var(--text-secondary);
+}
+
+.loading-ring {
+  width: 48px; height: 48px;
+  border: 3px solid var(--border-subtle);
+  border-top-color: var(--swarm1);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.stream-screen[data-swarm="swarm2"] .loading-ring { border-top-color: var(--swarm2); }
+.stream-screen[data-swarm="swarm3"] .loading-ring { border-top-color: var(--swarm3); }
+
+/* Empty state */
+.stream-empty {
+  text-align: center;
+  padding: var(--sp-16) 0;
+  color: var(--text-muted);
+}
+
+.stream-empty .empty-icon { font-size: 3rem; margin-bottom: var(--sp-4); }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .role-grid { grid-template-columns: repeat(3, 1fr); }
+  .swarm-grid { grid-template-columns: 1fr; }
+  .config-header h1 { font-size: 1.8rem; }
+  .stream-body { padding: var(--sp-4); }
+  .stream-header { padding: var(--sp-3) var(--sp-4); }
+}
+
+@media (max-width: 420px) {
+  .role-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOAST
+   ═══════════════════════════════════════════════════════════════ */
+.toast-container {
+  position: fixed;
+  bottom: var(--sp-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-5);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  animation: toastIn 0.3s var(--ease-spring), toastOut 0.3s var(--ease-out) 3s forwards;
+  pointer-events: auto;
+}
+
+.toast.error { border-color: var(--error); color: var(--error); }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastOut {
+  from { opacity: 1; }
+  to   { opacity: 0; transform: translateY(-8px); }
+}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ═════════════════════════════════════════════════════════════
+     SCREEN 1 — CONFIG
+     ═════════════════════════════════════════════════════════════ -->
+<div id="screen-config" class="screen config-screen active" data-accent="swarm1">
+  <div class="config-container">
+    <div class="config-header">
+      <h1>Boardroom War Game</h1>
+      <p>Pitch your idea. Let the board debate it. Answer when they need you.</p>
+    </div>
+
+    <form id="config-form" class="config-form" autocomplete="off">
+      <!-- Topic -->
+      <div class="form-group">
+        <label class="form-label" for="input-topic">Your Idea / Topic</label>
+        <textarea id="input-topic" class="form-textarea" rows="4"
+          placeholder="e.g. AI-powered toothbrushes that adapt brushing patterns to your gum health..."
+          required></textarea>
+      </div>
+
+      <!-- Role -->
+      <div class="form-group">
+        <label class="form-label">Your Role</label>
+        <div class="role-grid" id="role-grid">
+          <button type="button" class="role-btn selected" data-role="Founder">Founder</button>
+          <button type="button" class="role-btn" data-role="Investor">Investor</button>
+          <button type="button" class="role-btn" data-role="Advisor">Advisor</button>
+          <button type="button" class="role-btn" data-role="Customer">Customer</button>
+          <button type="button" class="role-btn" data-role="Employee">Employee</button>
+        </div>
+      </div>
+
+      <!-- Output expectations -->
+      <div class="form-group">
+        <label class="form-label" for="input-expectations">Output Expectations</label>
+        <textarea id="input-expectations" class="form-textarea" rows="3"
+          placeholder="e.g. I want a clear GO/NO-GO decision with specific funding recommendations and risk factors..."
+        ></textarea>
+      </div>
+
+      <!-- Swarm picker -->
+      <div class="form-group">
+        <label class="form-label">Swarm Architecture</label>
+        <div class="swarm-grid" id="swarm-grid">
+          <div class="swarm-card selected" data-swarm="swarm1" tabindex="0" role="radio" aria-checked="true">
+            <div class="swarm-tag">Dynamic</div>
+            <div class="swarm-name">Swarm 1</div>
+            <div class="swarm-desc">Chair dynamically summons specialists based on your idea. Agents can request sub-agents for deep dives. The roster changes per pitch.</div>
+          </div>
+          <div class="swarm-card" data-swarm="swarm2" tabindex="0" role="radio" aria-checked="false">
+            <div class="swarm-tag">Organic</div>
+            <div class="swarm-name">Swarm 2</div>
+            <div class="swarm-desc">No fixed phases. Agents contribute through typed epistemic moves — ASSERT, CHALLENGE, REFINE, SYNTHESIZE. Organic conversation emerges.</div>
+          </div>
+          <div class="swarm-card" data-swarm="swarm3" tabindex="0" role="radio" aria-checked="false">
+            <div class="swarm-tag">Self-Generating</div>
+            <div class="swarm-name">Swarm 3</div>
+            <div class="swarm-desc">A meta-agent designs the deliberation structure per idea. The flow changes completely each time. Human input injected at natural pause points.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <button type="submit" class="btn-start" id="btn-start">
+        <span class="spinner"></span>
+        <span class="btn-text">Start Deliberation</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ═════════════════════════════════════════════════════════════
+     SCREEN 2 — LIVE STREAM
+     ═════════════════════════════════════════════════════════════ -->
+<div id="screen-stream" class="screen stream-screen" data-swarm="swarm1">
+  <div class="stream-header">
+    <div class="stream-header-left">
+      <h2 id="stream-title">Deliberation</h2>
+      <div class="stream-meta">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Connecting...</span>
+        <span class="stream-badge swarm1" id="swarm-badge">Dynamic</span>
+      </div>
+    </div>
+    <button class="btn-new" id="btn-new">New Deliberation</button>
+  </div>
+  <div class="stream-body" id="stream-body">
+    <div class="stream-loading" id="stream-loading">
+      <div class="loading-ring"></div>
+      <div>Connecting to swarm...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+const SWARM_CONFIG = {
+  swarm1: { port: 8091, label: 'Dynamic', color: 'var(--swarm1)', badge: 'swarm1' },
+  swarm2: { port: 8092, label: 'Organic', color: 'var(--swarm2)', badge: 'swarm2' },
+  swarm3: { port: 8093, label: 'Self-Generating', color: 'var(--swarm3)', badge: 'swarm3' },
+};
+
+let state = {
+  selectedRole: 'Founder',
+  selectedSwarm: 'swarm1',
+  sessionId: null,
+  eventSource: null,
+  isComplete: false,
+  pendingGateId: null,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// DOM REFS
+// ═══════════════════════════════════════════════════════════════
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const screenConfig = $('#screen-config');
+const screenStream = $('#screen-stream');
+const configForm = $('#config-form');
+const btnStart = $('#btn-start');
+const btnNew = $('#btn-new');
+const streamBody = $('#stream-body');
+const streamLoading = $('#stream-loading');
+const statusDot = $('#status-dot');
+const statusText = $('#status-text');
+const streamTitle = $('#stream-title');
+const swarmBadge = $('#swarm-badge');
+const toastContainer = $('#toast-container');
+
+// ═══════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════
+function baseUrl(swarm) {
+  const cfg = SWARM_CONFIG[swarm];
+  return `http://localhost:${cfg.port}`;
+}
+
+function showToast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  toastContainer.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+function switchScreen(show) {
+  screenConfig.classList.toggle('active', show === 'config');
+  screenStream.classList.toggle('active', show === 'stream');
+  if (show === 'stream') window.scrollTo(0, 0);
+}
+
+function updateAccent(swarm) {
+  screenConfig.setAttribute('data-accent', swarm);
+  screenStream.setAttribute('data-swarm', swarm);
+  const cfg = SWARM_CONFIG[swarm];
+  swarmBadge.className = `stream-badge ${cfg.badge}`;
+  swarmBadge.textContent = cfg.label;
+}
+
+function setStatus(status, text) {
+  statusDot.className = 'status-dot ' + status;
+  statusText.textContent = text;
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ''; }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ROLE PICKER
+// ═══════════════════════════════════════════════════════════════
+$$('.role-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.role-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    state.selectedRole = btn.dataset.role;
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SWARM PICKER
+// ═══════════════════════════════════════════════════════════════
+$$('.swarm-card').forEach(card => {
+  card.addEventListener('click', () => {
+    $$('.swarm-card').forEach(c => {
+      c.classList.remove('selected');
+      c.setAttribute('aria-checked', 'false');
+    });
+    card.classList.add('selected');
+    card.setAttribute('aria-checked', 'true');
+    state.selectedSwarm = card.dataset.swarm;
+    updateAccent(state.selectedSwarm);
+  });
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      card.click();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT CARD RENDERING
+// ═══════════════════════════════════════════════════════════════
+const AGENT_ICONS = {
+  board_chair: '🪑', ceo: '👔', cfo: '💰', cto: '⚙️',
+  cro: '📈', customer: '🛒', counsel: '⚖️',
+  human_founder: '👤', human: '👤',
+  generator: '🧬', implementor: '🔧', rectifier: '🔄',
+};
+
+function getAgentIcon(agent) {
+  if (!agent) return '💬';
+  const key = agent.toLowerCase().replace(/\s+/g, '_');
+  for (const [k, v] of Object.entries(AGENT_ICONS)) {
+    if (key.includes(k)) return v;
+  }
+  return '💬';
+}
+
+function createEventCard(event) {
+  const type = event.type;
+  const div = document.createElement('div');
+
+  if (type === 'phase_start') {
+    div.className = 'event-card phase_start';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">▸</span>
+        <span class="event-card-title">${escapeHtml(event.label || event.phase || 'Phase Start')}</span>
+      </div>`;
+    return div;
+  }
+
+  if (type === 'phase_end') {
+    div.className = 'event-card phase_end';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-title">— ${escapeHtml(event.phase || 'Phase End')} —</span>
+      </div>`;
+    return div;
+  }
+
+  if (type === 'session_start') {
+    div.className = 'event-card phase_start';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">🎬</span>
+        <span class="event-card-title">Session Started</span>
+      </div>
+      <div class="event-card-body">${escapeHtml(event.idea || '')}</div>`;
+    return div;
+  }
+
+  if (type === 'session_done') {
+    div.className = 'event-card session_done';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">✅</span>
+        <span class="event-card-title">Deliberation Complete</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>`;
+    return div;
+  }
+
+  if (type === 'human_gate') {
+    div.className = 'event-card human_gate';
+    div.id = `gate-${event.gate_id}`;
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">👤</span>
+        <span class="event-card-title">Your Turn — ${escapeHtml(event.target_role || state.selectedRole)}</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>
+      <div class="human-gate-question">${escapeHtml(event.question)}</div>
+      <div class="human-gate-form" id="gate-form-${event.gate_id}">
+        <textarea id="gate-input-${event.gate_id}" placeholder="Type your response..." rows="3"></textarea>
+        <button class="btn-respond" id="gate-btn-${event.gate_id}" data-gate-id="${event.gate_id}">
+          <span class="spinner"></span>
+          Submit Response
+        </button>
+      </div>`;
+    // Bind submit handler after DOM insert
+    setTimeout(() => {
+      const btn = document.getElementById(`gate-btn-${event.gate_id}`);
+      const input = document.getElementById(`gate-input-${event.gate_id}`);
+      if (btn) {
+        btn.addEventListener('click', () => submitHumanResponse(event.gate_id, input));
+      }
+      if (input) {
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            submitHumanResponse(event.gate_id, input);
+          }
+        });
+      }
+    }, 50);
+    return div;
+  }
+
+  if (type === 'agent_say') {
+    div.className = 'event-card agent_say';
+    const icon = getAgentIcon(event.agent);
+    const name = event.agent_name || event.agent || 'Agent';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">${icon}</span>
+        <span class="event-card-title">${escapeHtml(name)}</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>
+      <div class="event-card-body">${formatMessage(event.message)}</div>`;
+    return div;
+  }
+
+  if (type === 'agent_think') {
+    div.className = 'event-card agent_think';
+    const icon = getAgentIcon(event.agent);
+    const name = event.agent_name || event.agent || 'Agent';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">${icon}</span>
+        <span class="event-card-title">${escapeHtml(name)}</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>
+      <div class="event-card-body">${escapeHtml(event.message || '')}</div>`;
+    return div;
+  }
+
+  if (type === 'agents_summoned') {
+    div.className = 'event-card phase_start';
+    const agents = event.agents || [];
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">📋</span>
+        <span class="event-card-title">Agents Summoned</span>
+      </div>
+      <div class="event-card-body">${agents.map(a => escapeHtml(a)).join(' · ')}</div>`;
+    return div;
+  }
+
+  if (type === 'architecture') {
+    div.className = 'event-card phase_start';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">🏗️</span>
+        <span class="event-card-title">${escapeHtml(event.name || 'Architecture')}</span>
+      </div>
+      <div class="event-card-body">${escapeHtml(event.description || '')}</div>`;
+    return div;
+  }
+
+  if (type === 'subagent_spawned') {
+    div.className = 'event-card agent_think';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">🔬</span>
+        <span class="event-card-title">Sub-agent: ${escapeHtml(event.role || 'Specialist')}</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>
+      <div class="event-card-body">${escapeHtml(event.task || 'Deep dive in progress...')}</div>`;
+    return div;
+  }
+
+  if (type === 'error') {
+    div.className = 'event-card error';
+    div.innerHTML = `
+      <div class="event-card-header">
+        <span class="event-card-icon">⚠️</span>
+        <span class="event-card-title">Error</span>
+        <span class="event-card-time">${formatTime(event.ts)}</span>
+      </div>
+      <div class="event-card-body">${escapeHtml(event.message || 'Unknown error')}</div>`;
+    return div;
+  }
+
+  if (type === 'heartbeat' || type === 'keepalive') {
+    return null; // Skip heartbeat events
+  }
+
+  // Generic fallback
+  div.className = 'event-card';
+  div.innerHTML = `
+    <div class="event-card-header">
+      <span class="event-card-icon">•</span>
+      <span class="event-card-title">${escapeHtml(type)}</span>
+      <span class="event-card-time">${formatTime(event.ts)}</span>
+    </div>
+    <div class="event-card-body">${escapeHtml(JSON.stringify(event, null, 2).substring(0, 500))}</div>`;
+  return div;
+}
+
+function formatMessage(msg) {
+  if (!msg) return '';
+  // Basic markdown-ish formatting
+  let html = escapeHtml(msg);
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Headers
+  html = html.replace(/^## (.+)$/gm, '<strong style="font-size:1.05em">$1</strong>');
+  html = html.replace(/^# (.+)$/gm, '<strong style="font-size:1.15em">$1</strong>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function appendEventCard(event) {
+  // Remove loading indicator on first real event
+  if (streamLoading) {
+    streamLoading.remove();
+  }
+
+  const card = createEventCard(event);
+  if (!card) return;
+
+  streamBody.appendChild(card);
+  // Auto-scroll
+  requestAnimationFrame(() => {
+    card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HUMAN RESPONSE
+// ═══════════════════════════════════════════════════════════════
+async function submitHumanResponse(gateId, inputEl) {
+  const text = inputEl.value.trim();
+  if (!text) {
+    inputEl.focus();
+    return;
+  }
+
+  const btn = document.getElementById(`gate-btn-${gateId}`);
+  if (btn) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+  }
+  inputEl.disabled = true;
+
+  const base = baseUrl(state.selectedSwarm);
+  const sid = state.sessionId;
+
+  try {
+    const url = `${base}/api/deliberations/${sid}/respond?gate_id=${encodeURIComponent(gateId)}&response_text=${encodeURIComponent(text)}`;
+    const resp = await fetch(url, { method: 'POST' });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      showToast(err.error || 'Failed to submit response', 'error');
+      btn.classList.remove('loading');
+      btn.disabled = false;
+      inputEl.disabled = false;
+      return;
+    }
+
+    // Mark gate as answered
+    const gateCard = document.getElementById(`gate-${gateId}`);
+    if (gateCard) {
+      const form = document.getElementById(`gate-form-${gateId}`);
+      if (form) {
+        form.innerHTML = `<div style="color: var(--success); font-size: 0.85rem; padding: var(--sp-2);">✓ Response submitted</div>`;
+      }
+      gateCard.classList.remove('human_gate');
+      gateCard.classList.add('agent_say');
+      gateCard.style.animation = 'none';
+      gateCard.style.boxShadow = 'none';
+    }
+
+    setStatus('live', 'Deliberation continues...');
+    state.pendingGateId = null;
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    inputEl.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SSE STREAM
+// ═══════════════════════════════════════════════════════════════
+function connectSSE(sid) {
+  const base = baseUrl(state.selectedSwarm);
+  const url = `${base}/api/deliberations/${sid}/stream`;
+
+  // Close existing connection
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+
+  setStatus('live', 'Live');
+
+  const es = new EventSource(url);
+  state.eventSource = es;
+
+  es.onmessage = (e) => {
+    let event;
+    try {
+      event = JSON.parse(e.data);
+    } catch {
+      return; // Skip malformed
+    }
+
+    handleEvent(event);
+  };
+
+  es.onerror = () => {
+    if (!state.isComplete) {
+      setStatus('error', 'Connection lost — reconnecting...');
+      // EventSource auto-reconnects, but update UI
+    }
+  };
+
+  es.addEventListener('open', () => {
+    if (!state.isComplete) {
+      setStatus('live', 'Live');
+    }
+  });
+}
+
+function handleEvent(event) {
+  const type = event.type;
+
+  if (type === 'human_gate') {
+    state.pendingGateId = event.gate_id;
+    setStatus('awaiting', 'Awaiting your response');
+  }
+
+  if (type === 'session_done') {
+    state.isComplete = true;
+    setStatus('', 'Complete');
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+  }
+
+  if (type === 'error') {
+    setStatus('error', 'Error');
+  }
+
+  appendEventCard(event);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORM SUBMIT — CREATE & START SESSION
+// ═══════════════════════════════════════════════════════════════
+configForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const topic = document.getElementById('input-topic').value.trim();
+  const role = state.selectedRole;
+  const expectations = document.getElementById('input-expectations').value.trim();
+  const swarm = state.selectedSwarm;
+
+  if (!topic) {
+    showToast('Please enter your idea or topic.', 'error');
+    return;
+  }
+
+  btnStart.classList.add('loading');
+  btnStart.disabled = true;
+
+  const base = baseUrl(swarm);
+
+  try {
+    // Step 1: Create deliberation
+    const createUrl = `${base}/api/deliberations?topic=${encodeURIComponent(topic)}&user_role=${encodeURIComponent(role)}&output_expectations=${encodeURIComponent(expectations)}&swarm_type=${encodeURIComponent(swarm)}`;
+    const createResp = await fetch(createUrl, { method: 'POST' });
+
+    if (!createResp.ok) {
+      const err = await createResp.json().catch(() => ({ error: createResp.statusText }));
+      throw new Error(err.error || 'Failed to create session');
+    }
+
+    const session = await createResp.json();
+    const sid = session.session_id;
+    state.sessionId = sid;
+
+    // Step 2: Start deliberation
+    const startUrl = `${base}/api/deliberations/${sid}/start`;
+    const startResp = await fetch(startUrl, { method: 'POST' });
+
+    if (!startResp.ok) {
+      const err = await startResp.json().catch(() => ({ error: startResp.statusText }));
+      throw new Error(err.error || 'Failed to start deliberation');
+    }
+
+    // Step 3: Switch to stream screen
+    streamTitle.textContent = topic.length > 50 ? topic.substring(0, 50) + '...' : topic;
+    updateAccent(swarm);
+    switchScreen('stream');
+
+    // Clear stream body
+    streamBody.innerHTML = '<div class="stream-loading" id="stream-loading"><div class="loading-ring"></div><div>Connecting to swarm...</div></div>';
+
+    // Step 4: Connect SSE
+    connectSSE(sid);
+
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btnStart.classList.remove('loading');
+    btnStart.disabled = false;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// NEW DELIBERATION
+// ═══════════════════════════════════════════════════════════════
+btnNew.addEventListener('click', () => {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  state.sessionId = null;
+  state.isComplete = false;
+  state.pendingGateId = null;
+  switchScreen('config');
+});
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+updateAccent('swarm1');
+</script>
+</body>
+</html>

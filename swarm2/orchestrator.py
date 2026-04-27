@@ -1,25 +1,23 @@
-"""Swarm 2: Organic Conversation — Pressure-field inspired
+"""Swarm 2: Organic Conversation — Pressure-field inspired (human-in-the-loop)
 
 No phases. No pipeline. Agents contribute to a SHARED DECISION ARTIFACT
 through typed epistemic moves. Multi-round with temporal decay.
 
-Key differences from Dynamic Swarm:
-- No chair decides who speaks — any agent can contribute at any time
-- Typed moves: ASSERT, CHALLENGE, REFINE, SYNTHESIZE, CONCEDE
-- Shared decision artifact (the "board opinion") evolves round by round
-- Temporal decay: early contributions carry more weight
-- Convergence: rounds continue until convergence or max rounds
-- Agents choose their OWN move type based on the current state
+Human participates as a typed move contributor. After Round 1, the Board Chair
+can issue a REQUEST move targeting the human. The orchestrator pauses,
+asks the human question, and injects their typed move (ASSERT/CHALLENGE/etc.)
+into the conversation transcript.
 """
 from __future__ import annotations
-import asyncio, json, os, re, importlib
+import asyncio, json, os, re, importlib, uuid
 from datetime import datetime, timezone
 import httpx, sys
 
 _parent = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
-from shared_llm import EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY
+from shared_llm import (EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY,
+                       HumanSession, HumanGate, resume_human)
 
 # Load agents from THIS directory
 _this = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +26,37 @@ _swarm2_agents = importlib.util.module_from_spec(_import_spec)
 _import_spec.loader.exec_module(_swarm2_agents)
 AGENTS = _swarm2_agents.AGENTS
 
-MOVE_TYPES = ["ASSERT", "CHALLENGE", "REFINE", "SYNTHESIZE", "CONCEDE"]
+MOVE_TYPES = ["ASSERT", "CHALLENGE", "REFINE", "SYNTHESIZE", "CONCEDE", "REQUEST"]
+
+async def _await_human(session, phase: str, question: str, emitter, session_id: str) -> str:
+    gate_id = f"hg-{uuid.uuid4().hex[:8]}"
+    gate = HumanGate(gate_id=gate_id, target_role=session.user_role,
+                      question=question, phase=phase)
+    async with session._lock:
+        session.status = "awaiting_human"
+        session.pending_gate = gate
+
+    if emitter:
+        emitter.emit({
+            "type": "human_gate",
+            "gate_id": gate_id,
+            "target_role": session.user_role,
+            "question": question,
+            "phase": phase,
+            "user_role": session.user_role,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+        })
+
+    while True:
+        await asyncio.sleep(0.5)
+        async with session._lock:
+            if session.status != "awaiting_human":
+                for entry in reversed(session.transcript):
+                    if entry.get("gate_id") == gate_id:
+                        return entry["content"]
+                return ""
+
 
 def _parse_move(text):
     """Extract move type and content from agent response."""
@@ -67,11 +95,17 @@ def _format_artifact(artifact):
     return "\n".join(lines) if len(lines) > 2 else "The board opinion is still forming."
 
 
-async def run_deliberation(idea, session_id, session_dir, emitter=None):
+async def run_deliberation(idea, session_id, session_dir, emitter=None, human_session=None):
+    """
+    human_session: HumanSession object if human-in-the-loop, else None.
+    After Round 1, the Board Chair may REQUEST the human's input via a typed move.
+    The human's answer is injected as a typed ASSERT move into the transcript.
+    """
     os.makedirs(session_dir, exist_ok=True)
     all_outputs = {}
     artifact = {"verdict": None, "key_points": [], "open_issues": [], "consensus_areas": []}
-    move_history = []  # Track all moves for convergence detection
+    move_history = []
+    use_human = human_session is not None
 
     def emit(ev):
         ev["ts"] = datetime.now(timezone.utc).isoformat()
@@ -174,12 +208,54 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
             emit({"type": "artifact_update", "artifact": artifact, "round": round_num})
             emit({"type": "round_end", "round": round_num})
 
+            # Human pause after Round 1 — ask for founder's context
+            if use_human and round_num == 1:
+                question = (
+                    f"You've heard the opening assertions about **{idea}**. "
+                    f"As the founder, what is your single strongest point of differentiation? "
+                    f"And what is your biggest vulnerability that the board should know about?"
+                )
+                answer = await _await_human(human_session, "founder_context", question, emitter, session_id)
+                if answer:
+                    human_move_text = f"ASSERT: {answer}"
+                    move, content = _parse_move(human_move_text)
+                    move_history.append({"agent": "human_founder", "move": move, "round": round_num})
+                    all_outputs.setdefault("human_founder", []).append(human_move_text)
+                    artifact["key_points"].append(f"Founder: {content[:80]}")
+                    emit({"type": "move", "agent": "human_founder", "move": move, "round": round_num})
+                    ctx += f"\n\n## {human_session.user_role} (R{round_num}, {move})\n{answer}"
+
+            # Also allow the Board Chair to REQUEST human input in Round 2+
+            if use_human and round_num >= 2:
+                # Check if any recent REQUEST was directed at human (parse from last few moves in ctx)
+                for line in ctx.split("\n")[-20:]:
+                    if "REQUEST" in line.upper() and ("human" in line.lower() or "founder" in line.lower()):
+                        m = re.search(r"REQUEST[:\s]*.+?[-–]\s*(.+)", line, re.IGNORECASE)
+                        if m:
+                            question = m.group(1).strip()
+                            if len(question) > 10:
+                                answer = await _await_human(human_session, "round_question", question, emitter, session_id)
+                                if answer:
+                                    human_move_text = f"ASSERT: {answer}"
+                                    move, content = _parse_move(human_move_text)
+                                    move_history.append({"agent": "human_founder", "move": move, "round": round_num})
+                                    all_outputs.setdefault("human_founder", []).append(human_move_text)
+                                    ctx += f"\n\n## {human_session.user_role} (R{round_num}, {move})\n{answer}"
+                        break
+
         # === FINAL VERDICT ===
+        verdict_suffix = ""
+        if use_human and human_session.output_expectations:
+            verdict_suffix = (
+                f"\n\nUser's requested output: **{human_session.output_expectations}**. "
+                "Format your verdict to match this."
+            )
         emit({"type": "phase_start", "phase": "verdict", "label": "Final Verdict"})
         ctx_final = ctx + f"\n\n# Current Board Opinion\n{_format_artifact(artifact)}"
         verdict_resp = await run_agent(client, "board_chair", AGENTS["board_chair"]["system"],
             "The board has debated for 4 rounds. Issue the FINAL VERDICT: "
-            "APPROVED/REJECTED/CONDITIONAL. Funding, risk, key conditions. 300-500 words.",
+            "APPROVED/REJECTED/CONDITIONAL. Funding, risk, key conditions. 300-500 words."
+            + verdict_suffix,
             ctx_final, emitter=emitter, session_id=session_id, agent_name="Board Chair")
         all_outputs.setdefault("board_chair", []).append(verdict_resp)
         emit({"type": "phase_end", "phase": "verdict"})

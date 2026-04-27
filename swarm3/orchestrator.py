@@ -1,27 +1,25 @@
-"""Swarm 3: Self-Generating — MAS²-inspired
+"""Swarm 3: Self-Generating — MAS²-inspired (human-in-the-loop)
 
 A meta-agent (the Generator) DESIGNS the deliberation structure based on the idea.
 An Implementor EXECUTES it. A Rectifier CORRECTS mid-deliberation.
+Human input is injected as human_input plan steps.
 
-Key differences:
-- No fixed phases — the Generator creates a custom deliberation plan per idea
-- The plan specifies: which agents participate, in what order, with what prompts
-- The Implementor follows the generated plan
-- The Rectifier can MODIFY the plan mid-execution if things go wrong
-- The plan itself is an artifact — visible, editable, self-correcting
-
-This is genuinely different because the deliberation STRUCTURE is not predetermined.
-A consumer app gets a different plan than a deep-tech hardware play.
+Key differences from other swarms:
+- The deliberation STRUCTURE is generated per-idea by a meta-agent
+- Human's role and expectations are inputs to the Generator
+- The Generator can plan `human_input` steps at natural pause points
+- This is genuinely different because the flow changes completely per idea
 """
 from __future__ import annotations
-import asyncio, json, os, re, importlib
+import asyncio, json, os, re, importlib, uuid
 from datetime import datetime, timezone
 import httpx, sys
 
 _parent = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
-from shared_llm import EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY
+from shared_llm import (EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY,
+                        HumanSession, HumanGate, resume_human, format_shared_context)
 
 # Load agents from THIS directory
 _this = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +27,36 @@ _import_spec = importlib.util.spec_from_file_location("swarm3_agents", os.path.j
 _swarm3_agents = importlib.util.module_from_spec(_import_spec)
 _import_spec.loader.exec_module(_swarm3_agents)
 AGENT_POOL = _swarm3_agents.AGENT_POOL
+
+
+async def _await_human(session, phase: str, question: str, emitter, session_id: str) -> str:
+    gate_id = f"hg-{uuid.uuid4().hex[:8]}"
+    gate = HumanGate(gate_id=gate_id, target_role=session.user_role,
+                      question=question, phase=phase)
+    async with session._lock:
+        session.status = "awaiting_human"
+        session.pending_gate = gate
+
+    if emitter:
+        emitter.emit({
+            "type": "human_gate",
+            "gate_id": gate_id,
+            "target_role": session.user_role,
+            "question": question,
+            "phase": phase,
+            "user_role": session.user_role,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+        })
+
+    while True:
+        await asyncio.sleep(0.5)
+        async with session._lock:
+            if session.status != "awaiting_human":
+                for entry in reversed(session.transcript):
+                    if entry.get("gate_id") == gate_id:
+                        return entry["content"]
+                return ""
 
 def _parse_plan(plan_text):
     """Parse the LLM-generated plan into executable steps."""
@@ -57,7 +85,10 @@ def _parse_plan(plan_text):
                 for ak, agent in AGENT_POOL.items():
                     if agent["name"].upper() in agent_names or ak.upper() in agent_names:
                         current_step["agents"].append(ak)
-                current_step["parallel"] = len(current_step["agents"]) > 1
+                # Check for "human" agent (marks this as a human_input step)
+                if any("HUMAN" in n for n in agent_names):
+                    current_step["agents"] = ["human_input"]
+                current_step["parallel"] = len(current_step["agents"]) > 1 and current_step["agents"][0] != "human_input"
                 continue
             m3 = re.match(r"(?:Mode|Execution)\s*[:\-]\s*(parallel|sequential)", line, re.IGNORECASE)
             if m3:
@@ -74,10 +105,16 @@ def _parse_plan(plan_text):
     return steps
 
 
-async def run_deliberation(idea, session_id, session_dir, emitter=None):
+async def run_deliberation(idea, session_id, session_dir, emitter=None, human_session=None):
+    """
+    human_session: HumanSession object if human-in-the-loop, else None.
+    If provided, the Generator is told the user's role + expectations,
+    and human_input steps are injected at natural pause points.
+    """
     os.makedirs(session_dir, exist_ok=True)
     all_outputs = {}
     plan_steps = []
+    use_human = human_session is not None
 
     def emit(ev):
         ev["ts"] = datetime.now(timezone.utc).isoformat()
@@ -106,16 +143,26 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
             "- Not every idea needs every agent. Be SELECTIVE.\n"
             "- 3-6 steps total. Keep it focused.\n"
             "- Choose agents based on the IDEA'S domain, not a default roster.\n\n"
+            "You may add ONE 'human_input' step at a natural pause point (e.g., after CEO pitch or after first analysis round). "
+            "Use it for facts only the human founder can provide.\n\n"
             "Format each step as:\n"
             "Step N: [label]\n"
-            "Agents: [comma-separated agent names]\n"
+            "Agents: [comma-separated agent names, or 'human' for human_input]\n"
             "Mode: parallel OR sequential\n"
             "Prompt: [what they should focus on]"
         )
 
+        user_context = ""
+        if use_human:
+            default_exp = human_session.output_expectations or "raw transcript"
+            user_context = (
+                f"\n\nHuman participant: role='{human_session.user_role}', "
+                f"output_expectations='{default_exp}'"
+            )
+
         plan_resp = await run_agent(client, "generator", generator_sys,
             f"Design a deliberation plan for: **{idea}**. "
-            "Output the step-by-step plan. Be specific about which agents and what prompts.",
+            f"Output the step-by-step plan. Be specific about which agents and what prompts.{user_context}",
             "", emitter=emitter, session_id=session_id, agent_name="Generator")
         all_outputs["generator"] = [plan_resp]
 
@@ -150,12 +197,23 @@ async def run_deliberation(idea, session_id, session_dir, emitter=None):
             prompt_hint = step.get("prompt_hint", "")
 
             emit({"type": "step_start", "step": step_num, "label": step_label,
-                  "agents": [AGENT_POOL.get(a, {}).get("name", a) for a in step_agents],
+                  "agents": [AGENT_POOL.get(a, {}).get("name", a) for a in step_agents] if step_agents and step_agents[0] != "human_input" else ["Human Founder"],
                   "parallel": is_parallel})
 
             ctx = "\n\n".join(context_parts) if context_parts else ""
 
-            if is_parallel and len(step_agents) > 1:
+            # Human input step — pause and ask user
+            if step_agents and step_agents[0] == "human_input":
+                question = f"{prompt_hint or 'Please answer the board\'s question.'}\nIdea: {idea}"
+                if use_human:
+                    answer = await _await_human(human_session, f"step_{step_num}", question, emitter, session_id)
+                    context_parts.append(f"## {human_session.user_role}\n{answer}")
+                    all_outputs.setdefault("human_founder", []).append(answer)
+                else:
+                    # No human session — skip with a note
+                    context_parts.append(f"## [Human Founder skipped — no user session]")
+                emit({"type": "step_end", "step": step_num})
+            elif is_parallel and len(step_agents) > 1:
                 tasks = []
                 for ak in step_agents:
                     if ak not in AGENT_POOL:
