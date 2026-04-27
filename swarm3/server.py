@@ -1,0 +1,162 @@
+"""FastAPI server for swarm3 — raw httpx boardroom deliberation.
+
+Port 8093. Tunneled to swarm3.neil.ro.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from sse_starlette.sse import EventSourceResponse
+
+# Load .env from parent directory
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+from orchestrator import EventEmitter, run_deliberation
+
+app = FastAPI(title="Swarm3 — Raw httpx Boardroom")
+
+# Paths
+BASE_DIR = Path(__file__).parent
+SESSIONS_DIR = BASE_DIR / "sessions"
+STATIC_DIR = BASE_DIR / "static"
+SESSIONS_DIR.mkdir(exist_ok=True)
+
+# Global event emitter
+_emitter = EventEmitter()
+
+# Active sessions
+_sessions: dict[str, dict] = {}
+
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all past sessions."""
+    sessions = []
+    for d in sorted(SESSIONS_DIR.iterdir(), reverse=True):
+        if d.is_dir():
+            events_file = d / "events.jsonl"
+            transcript_file = d / "transcript.md"
+            has_events = events_file.exists()
+            has_transcript = transcript_file.exists()
+            event_count = 0
+            if has_events:
+                with open(events_file) as f:
+                    event_count = sum(1 for _ in f)
+            sessions.append({
+                "session_id": d.name,
+                "has_transcript": has_transcript,
+                "has_events": has_events,
+                "event_count": event_count,
+            })
+    return sessions
+
+
+@app.post("/api/start")
+async def start_session(idea: str = Query(...), session_id: Optional[str] = Query(None)):
+    """Start a boardroom deliberation."""
+    sid = session_id or f"s3-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    session_dir = SESSIONS_DIR / sid
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    _sessions[sid] = {"idea": idea, "status": "running", "dir": str(session_dir)}
+
+    # Run deliberation in background
+    async def _run():
+        # Set up event capture to file
+        events_path = session_dir / "events.jsonl"
+        q = _emitter.subscribe()
+        try:
+            # Run deliberation and capture events to file
+            async def _write_events():
+                with open(events_path, "a", encoding="utf-8") as f:
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(q.get(), timeout=0.5)
+                            f.write(json.dumps(event) + "\n")
+                            f.flush()
+                        except asyncio.TimeoutError:
+                            if _sessions.get(sid, {}).get("status") == "done":
+                                break
+
+            writer_task = asyncio.create_task(_write_events())
+            await run_deliberation(idea, sid, str(session_dir), emitter=_emitter)
+            _sessions[sid]["status"] = "done"
+            # Give writer a moment to flush
+            await asyncio.sleep(1)
+            writer_task.cancel()
+        finally:
+            _emitter.unsubscribe(q)
+
+    asyncio.create_task(_run())
+    return JSONResponse({"session_id": sid, "status": "started"})
+
+
+@app.get("/api/events")
+async def stream_events(request: Request):
+    """SSE endpoint for real-time events."""
+    async def _generate():
+        q = _emitter.subscribe()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=30)
+                    yield {"data": json.dumps(event), "event": "message"}
+                except asyncio.TimeoutError:
+                    yield {"data": json.dumps({"type": "heartbeat"}), "event": "message"}
+        finally:
+            _emitter.unsubscribe(q)
+
+    return EventSourceResponse(_generate())
+
+
+@app.get("/api/session/{sid}")
+async def get_session(sid: str):
+    """Get session details including all events."""
+    session_dir = SESSIONS_DIR / sid
+    if not session_dir.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    events = []
+    events_file = session_dir / "events.jsonl"
+    if events_file.exists():
+        with open(events_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    events.append(json.loads(line))
+
+    transcript = None
+    transcript_file = session_dir / "transcript.md"
+    if transcript_file.exists():
+        with open(transcript_file, encoding="utf-8") as f:
+            transcript = f.read()
+
+    return {"session_id": sid, "events": events, "transcript": transcript}
+
+
+@app.get("/")
+async def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("SWARM3_PORT", "8093"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
