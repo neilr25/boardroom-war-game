@@ -1,4 +1,4 @@
-"""FastAPI server for swarm3 — raw httpx boardroom deliberation.
+"""FastAPI server for swarm3 — Self-Generating Boardroom deliberation.
 
 Port 8093. Tunneled to swarm3.neil.ro.
 """
@@ -19,12 +19,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
-# Load .env from parent directory
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from orchestrator import EventEmitter, run_deliberation
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared_llm import EventEmitter
+from orchestrator import run_deliberation
 
-app = FastAPI(title="Swarm3 — Raw httpx Boardroom")
+app = FastAPI(title="Swarm3 — Self-Generating Boardroom")
 
 # Paths
 BASE_DIR = Path(__file__).parent

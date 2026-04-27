@@ -1,328 +1,232 @@
-"""Raw asyncio orchestrator for boardroom deliberation.
+"""Swarm 3: Self-Generating — MAS²-inspired
 
-No framework. Direct httpx calls to Ollama Cloud's OpenAI-compatible API.
-Full tool-use loop: model calls tool → execute → feed result back → loop.
+A meta-agent (the Generator) DESIGNS the deliberation structure based on the idea.
+An Implementor EXECUTES it. A Rectifier CORRECTS mid-deliberation.
+
+Key differences:
+- No fixed phases — the Generator creates a custom deliberation plan per idea
+- The plan specifies: which agents participate, in what order, with what prompts
+- The Implementor follows the generated plan
+- The Rectifier can MODIFY the plan mid-execution if things go wrong
+- The plan itself is an artifact — visible, editable, self-correcting
+
+This is genuinely different because the deliberation STRUCTURE is not predetermined.
+A consumer app gets a different plan than a deep-tech hardware play.
 """
 from __future__ import annotations
-
-import asyncio
-import json
-import os
-import time
-import uuid
+import asyncio, json, os, re, importlib
 from datetime import datetime, timezone
-from typing import Any
+import httpx, sys
 
-import httpx
+_parent = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
+from shared_llm import EventEmitter, call_llm, run_agent, DEFAULT_MODEL, TIMEOUT, API_KEY
 
-from agents import AGENTS, PHASES
-from tools import ALL_TOOLS, execute_tool, set_session_dir
+# Load agents from THIS directory
+_this = os.path.dirname(os.path.abspath(__file__))
+_import_spec = importlib.util.spec_from_file_location("swarm3_agents", os.path.join(_this, "agents.py"))
+_swarm3_agents = importlib.util.module_from_spec(_import_spec)
+_import_spec.loader.exec_module(_swarm3_agents)
+AGENT_POOL = _swarm3_agents.AGENT_POOL
 
-# --- Config ---
-API_BASE = os.getenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.com/v1")
-_dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-if os.path.exists(_dotenv_path):
-    from dotenv import load_dotenv
-    load_dotenv(_dotenv_path)
-API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
-DEFAULT_MODEL = "gemma4:31b:cloud"
-TIMEOUT = 120.0
-MAX_RETRIES = 3
-MAX_CONCURRENT = 5
-
-_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-
-
-class EventEmitter:
-    """Thread-safe event emitter that queues events for SSE delivery."""
-
-    def __init__(self):
-        self._queues: list[asyncio.Queue] = []
-
-    def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue()
-        self._queues.append(q)
-        return q
-
-    def unsubscribe(self, q: asyncio.Queue) -> None:
-        if q in self._queues:
-            self._queues.remove(q)
-
-    def emit(self, event: dict) -> None:
-        for q in self._queues:
-            q.put_nowait(event)
-
-
-async def _call_llm(
-    client: httpx.AsyncClient,
-    model: str,
-    messages: list[dict],
-    temperature: float = 0.3,
-    max_tokens: int = 2048,
-    tools: list[dict] | None = None,
-    retries: int = MAX_RETRIES,
-) -> dict:
-    """Call Ollama Cloud's chat/completions endpoint with retry."""
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if tools:
-        body["tools"] = tools
-
-    for attempt in range(retries):
-        try:
-            async with _semaphore:
-                resp = await client.post(
-                    f"{API_BASE}/chat/completions",
-                    headers={"Authorization": f"Bearer {API_KEY}"},
-                    json=body,
-                )
-            resp.raise_for_status()
-            return resp.json()
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
-            if attempt == retries - 1:
-                return {"error": str(e), "choices": [{"message": {"content": f"[API Error after {retries} retries: {e}]"}}]}
-            await asyncio.sleep(2 ** attempt)
-        except httpx.HTTPStatusError as e:
-            if resp.status_code == 429:
-                await asyncio.sleep(5 * (attempt + 1))
+def _parse_plan(plan_text):
+    """Parse the LLM-generated plan into executable steps."""
+    steps = []
+    current_step = None
+    for line in plan_text.split("\n"):
+        line = line.strip()
+        # Match step headers like "Step 1:", "STEP 2:", "## Step 1"
+        m = re.match(r"(?:##\s*)?(?:STEP|Step)\s*(\d+)\s*[:\-]?\s*(.*)", line)
+        if m:
+            if current_step:
+                steps.append(current_step)
+            current_step = {
+                "step": int(m.group(1)),
+                "label": m.group(2).strip(),
+                "agents": [],
+                "parallel": False,
+                "prompt_hint": "",
+            }
+            continue
+        # Match agent assignments like "Agent: CEO", "Agents: CTO, CFO"
+        if current_step:
+            m2 = re.match(r"Agents?\s*[:\-]\s*(.+)", line, re.IGNORECASE)
+            if m2:
+                agent_names = [a.strip().upper() for a in re.split(r"[,;&]", m2.group(1))]
+                for ak, agent in AGENT_POOL.items():
+                    if agent["name"].upper() in agent_names or ak.upper() in agent_names:
+                        current_step["agents"].append(ak)
+                current_step["parallel"] = len(current_step["agents"]) > 1
                 continue
-            if attempt == retries - 1:
-                return {"error": str(e), "choices": [{"message": {"content": f"[HTTP {resp.status_code}: {e}]"}}]}
-            await asyncio.sleep(2 ** attempt)
-
-    return {"choices": [{"message": {"content": "[Failed after all retries]"}}]}
-
-
-async def _run_agent(
-    client: httpx.AsyncClient,
-    agent_key: str,
-    user_prompt: str,
-    context: str = "",
-    emitter: EventEmitter | None = None,
-    session_id: str = "",
-) -> str:
-    """Run a single agent with tool-use loop."""
-    agent = AGENTS[agent_key]
-    model = agent["model"]
-    temp = agent["temperature"]
-
-    if emitter:
-        emitter.emit({
-            "type": "agent_think",
-            "agent": agent_key,
-            "agent_name": agent["name"],
-            "message": f"Preparing response...",
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
-        })
-
-    messages = [
-        {"role": "system", "content": agent["system"]},
-    ]
-    if context:
-        messages.append({"role": "user", "content": f"Context from previous deliberation:\n{context}\n\n---\n\n{user_prompt}"})
-    else:
-        messages.append({"role": "user", "content": user_prompt})
-
-    # Tool-use loop (max 5 tool rounds to prevent infinite loops)
-    for _ in range(5):
-        result = await _call_llm(client, model, messages, temp, tools=ALL_TOOLS)
-        if "error" in result and "choices" not in result:
-            content = f"[API Error: {result['error']}]"
-            break
-
-        choice = result["choices"][0]["message"]
-        content = choice.get("content", "")
-        tool_calls = choice.get("tool_calls")
-
-        if not tool_calls:
-            break
-
-        # Execute tools
-        messages.append(choice)
-        for tc in tool_calls:
-            fn_name = tc["function"]["name"]
-            fn_args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
-            tool_result = execute_tool(fn_name, fn_args)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": tool_result,
-            })
-            if emitter:
-                emitter.emit({
-                    "type": "tool_use",
-                    "agent": agent_key,
-                    "agent_name": agent["name"],
-                    "tool": fn_name,
-                    "args": fn_args,
-                    "result": tool_result[:200],
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "session_id": session_id,
-                })
-
-    # Emit agent speech
-    if emitter and content:
-        emitter.emit({
-            "type": "agent_say",
-            "agent": agent_key,
-            "agent_name": agent["name"],
-            "message": content,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
-        })
-
-    return content or "[No response]"
+            m3 = re.match(r"(?:Mode|Execution)\s*[:\-]\s*(parallel|sequential)", line, re.IGNORECASE)
+            if m3:
+                current_step["parallel"] = m3.group(1).lower() == "parallel"
+                continue
+            m4 = re.match(r"(?:Prompt|Focus|Task)\s*[:\-]\s*(.+)", line, re.IGNORECASE)
+            if m4:
+                current_step["prompt_hint"] = m4.group(1).strip()
+                continue
+            if line and not current_step["prompt_hint"] and not current_step["agents"]:
+                current_step["prompt_hint"] = line
+    if current_step:
+        steps.append(current_step)
+    return steps
 
 
-async def run_deliberation(
-    idea: str,
-    session_id: str,
-    session_dir: str,
-    emitter: EventEmitter | None = None,
-) -> dict:
-    """Run the full boardroom deliberation.
+async def run_deliberation(idea, session_id, session_dir, emitter=None):
+    os.makedirs(session_dir, exist_ok=True)
+    all_outputs = {}
+    plan_steps = []
 
-    Returns a dict of {agent_key: response_text}.
-    """
-    set_session_dir(session_dir)
-    outputs: dict[str, str] = {}
+    def emit(ev):
+        ev["ts"] = datetime.now(timezone.utc).isoformat()
+        ev["session_id"] = session_id
+        if emitter: emitter.emit(ev)
 
-    if emitter:
-        emitter.emit({
-            "type": "session_start",
-            "session_id": session_id,
-            "idea": idea,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        })
+    emit({"type": "session_start", "idea": idea})
+    emit({"type": "architecture", "name": "Self-Generating",
+          "description": "MAS²: meta-agent designs the deliberation structure. Plan is generated per-idea, executed by Implementor, corrected by Rectifier."})
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT)) as client:
+
+        # === PHASE 1: GENERATOR creates the deliberation plan ===
+        emit({"type": "phase_start", "phase": "generation", "label": "Generator Designs Plan"})
+
+        generator_sys = (
+            "You are the GENERATOR — a meta-agent that designs deliberation plans. "
+            "Given a startup idea, you create a STEP-BY-STEP plan specifying:\n"
+            "- Which agents participate in each step\n"
+            "- Whether they run in parallel or sequential\n"
+            "- What each agent should focus on\n\n"
+            "Available agents: " + ", ".join(f"{a['name']} ({a['role']})" for a in AGENT_POOL.values()) + "\n\n"
+            "CRITICAL RULES:\n"
+            "- CEO ALWAYS goes first (opening pitch)\n"
+            "- Board Chair ALWAYS goes last (final resolution)\n"
+            "- Not every idea needs every agent. Be SELECTIVE.\n"
+            "- 3-6 steps total. Keep it focused.\n"
+            "- Choose agents based on the IDEA'S domain, not a default roster.\n\n"
+            "Format each step as:\n"
+            "Step N: [label]\n"
+            "Agents: [comma-separated agent names]\n"
+            "Mode: parallel OR sequential\n"
+            "Prompt: [what they should focus on]"
+        )
+
+        plan_resp = await run_agent(client, "generator", generator_sys,
+            f"Design a deliberation plan for: **{idea}**. "
+            "Output the step-by-step plan. Be specific about which agents and what prompts.",
+            "", emitter=emitter, session_id=session_id, agent_name="Generator")
+        all_outputs["generator"] = [plan_resp]
+
+        # Parse the plan
+        plan_steps = _parse_plan(plan_resp)
+        if not plan_steps:
+            # Fallback plan
+            plan_steps = [
+                {"step": 1, "label": "Opening Pitch", "agents": ["ceo"], "parallel": False, "prompt_hint": "Pitch the idea"},
+                {"step": 2, "label": "Cross-Examination", "agents": ["cto", "cfo", "cro"], "parallel": True, "prompt_hint": "Challenge feasibility"},
+                {"step": 3, "label": "Closing", "agents": ["ceo"], "parallel": False, "prompt_hint": "Address objections"},
+                {"step": 4, "label": "Resolution", "agents": ["board_chair"], "parallel": False, "prompt_hint": "Final verdict"},
+            ]
+
+        emit({"type": "plan_generated", "plan": plan_steps,
+              "plan_text": plan_resp[:500]})
+        emit({"type": "phase_end", "phase": "generation"})
+
+        # Save the plan
+        with open(os.path.join(session_dir, "plan.json"), "w", encoding="utf-8") as f:
+            json.dump(plan_steps, f, indent=2)
+
+        # === PHASE 2: IMPLEMENTOR executes the plan ===
+        emit({"type": "phase_start", "phase": "execution", "label": "Implementor Executes Plan"})
         context_parts = []
 
-        for phase in PHASES:
-            phase_name = phase["name"]
-            phase_agents = phase["agents"]
-            is_parallel = phase.get("parallel", False)
+        for step in plan_steps:
+            step_num = step["step"]
+            step_label = step.get("label", f"Step {step_num}")
+            step_agents = step.get("agents", [])
+            is_parallel = step.get("parallel", False)
+            prompt_hint = step.get("prompt_hint", "")
 
-            if emitter:
-                emitter.emit({
-                    "type": "phase_start",
-                    "phase": phase_name,
-                    "label": phase["label"],
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "session_id": session_id,
-                })
+            emit({"type": "step_start", "step": step_num, "label": step_label,
+                  "agents": [AGENT_POOL.get(a, {}).get("name", a) for a in step_agents],
+                  "parallel": is_parallel})
 
-            context = "\n\n".join(context_parts)
+            ctx = "\n\n".join(context_parts) if context_parts else ""
 
-            if is_parallel and len(phase_agents) > 1:
-                # Run specialists in parallel
-                prompts = _build_prompts(phase_name, idea, context)
-                tasks = [
-                    _run_agent(client, ak, prompts[ak], context, emitter, session_id)
-                    for ak in phase_agents
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for ak, res in zip(phase_agents, results):
-                    text = str(res) if isinstance(res, Exception) else res
-                    outputs[ak] = text
-                    context_parts.append(f"## {AGENTS[ak]['name']}\n{text}")
+            if is_parallel and len(step_agents) > 1:
+                tasks = []
+                for ak in step_agents:
+                    if ak not in AGENT_POOL:
+                        continue
+                    agent = AGENT_POOL[ak]
+                    prompt = f"For the startup idea **{idea}**: {prompt_hint}. 200-300 words."
+                    tasks.append((ak, run_agent(client, ak, agent["system"], prompt, ctx,
+                        emitter=emitter, session_id=session_id, agent_name=agent["name"],
+                        temperature=agent["temperature"])))
+                if tasks:
+                    results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+                    for (ak, _), res in zip(tasks, results):
+                        text = str(res) if isinstance(res, Exception) else res
+                        context_parts.append(f"## {AGENT_POOL[ak]['name']}\n{text}")
+                        all_outputs.setdefault(ak, []).append(text)
             else:
-                for ak in phase_agents:
-                    prompts = _build_prompts(phase_name, idea, context)
-                    text = await _run_agent(client, ak, prompts[ak], context, emitter, session_id)
-                    outputs[ak] = text
-                    context_parts.append(f"## {AGENTS[ak]['name']}\n{text}")
+                for ak in step_agents:
+                    if ak not in AGENT_POOL:
+                        continue
+                    agent = AGENT_POOL[ak]
+                    prompt = f"For the startup idea **{idea}**: {prompt_hint}. 200-300 words."
+                    text = await run_agent(client, ak, agent["system"], prompt, ctx,
+                        emitter=emitter, session_id=session_id, agent_name=agent["name"],
+                        temperature=agent["temperature"])
+                    context_parts.append(f"## {agent['name']}\n{text}")
+                    all_outputs.setdefault(ak, []).append(text)
+                    ctx = "\n\n".join(context_parts)
 
-            if emitter:
-                emitter.emit({
-                    "type": "phase_end",
-                    "phase": phase_name,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "session_id": session_id,
-                })
+            emit({"type": "step_end", "step": step_num})
 
-    if emitter:
-        emitter.emit({
-            "type": "session_done",
-            "session_id": session_id,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        })
+            # === RECTIFIER check after each step ===
+            if step_num >= 2 and step_num < len(plan_steps):
+                rectifier_sys = (
+                    "You are the RECTIFIER — you monitor deliberation quality. "
+                    "Given the current discussion, decide if the remaining plan needs modification. "
+                    "Respond with either 'CONTINUE' (plan is fine) or 'MODIFY: [specific changes]'."
+                )
+                rect_check = await run_agent(client, "rectifier", rectifier_sys,
+                    f"Current deliberation on **{idea}**:\n{ctx}\n\n"
+                    f"Remaining steps: {json.dumps(plan_steps[step_num:], default=str)}\n\n"
+                    "Does the plan need modification? CONTINUE or MODIFY: [changes].",
+                    "", emitter=emitter, session_id=session_id, agent_name="Rectifier")
+
+                if "MODIFY:" in rect_check.upper():
+                    # Try to parse modifications (simple: skip next step or adjust prompt)
+                    emit({"type": "rectification", "rectifier_response": rect_check[:200]})
+                    all_outputs.setdefault("rectifier", []).append(rect_check)
+                    # Simple modification: if rectifier says skip, mark next step agents as empty
+                    if "SKIP" in rect_check.upper():
+                        plan_steps[step_num]["agents"] = []
+                        emit({"type": "step_skipped", "step": step_num + 1})
+
+        emit({"type": "phase_end", "phase": "execution"})
+
+    emit({"type": "session_done"})
 
     # Save transcript
-    transcript_path = os.path.join(session_dir, "transcript.md")
-    with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write(f"# Boardroom Deliberation — {idea}\n\n")
-        f.write(f"Session: {session_id}\n\n---\n\n")
-        for ak, text in outputs.items():
-            f.write(f"## {AGENTS[ak]['name']} {AGENTS[ak]['emoji']}\n\n{text}\n\n---\n\n")
-
-    return outputs
-
-
-def _build_prompts(phase: str, idea: str, context: str) -> dict[str, str]:
-    """Build user prompts for each agent in a phase."""
-    prompts: dict[str, str] = {}
-
-    if phase == "opening":
-        prompts["ceo"] = (
-            f"Deliver your Opening Pitch for the startup idea: **{idea}**.\n\n"
-            "Cover: the headline problem, your solution, the funding ask, and your confidence level (1-5). "
-            "Be compelling. Own the room. 200-400 words."
-        )
-
-    elif phase == "cross_exam":
-        prompts["cto"] = (
-            f"You've heard the CEO's opening pitch for **{idea}**. Now cross-examine the technical feasibility.\n\n"
-            "Focus on: buildability (6-week MVP or science project?), scalability, recommended tech stack, "
-            "deal-killing technical risks. Be brutal. 200-300 words."
-        )
-        prompts["cfo"] = (
-            f"You've heard the CEO's opening pitch for **{idea}**. Now stress-test the financial viability.\n\n"
-            "Focus on: unit economics (LTV/CAC), burn rate, TAM/SAM/SOM, 3-year revenue projections, "
-            "financial deal-killers. Use the calculator if needed. 200-300 words."
-        )
-        prompts["cro"] = (
-            f"You've heard the CEO's opening pitch for **{idea}**. Now evaluate the go-to-market strategy.\n\n"
-            "Focus on: top 3 acquisition channels, viral coefficient estimate, CAC payback, "
-            "conversion funnel observations. Demand specifics. 200-300 words."
-        )
-        prompts["customer"] = (
-            f"You've heard the CEO's opening pitch for **{idea}**. Now reality-check it from the buyer's perspective.\n\n"
-            "Focus on: switching costs, jobs-to-be-done, willingness to pay, top 3 buyer objections. "
-            "Be the skeptic. 200-300 words."
-        )
-        prompts["counsel"] = (
-            f"You've heard the CEO's opening pitch for **{idea}**. Now audit the legal, regulatory, and IP risks.\n\n"
-            "Focus on: patent landscape, regulatory matrix (GDPR, SEC, industry-specific), "
-            "litigation risk, non-negotiables. Find the landmine. 200-300 words."
-        )
-
-    elif phase == "rebuttal":
-        prompts["ceo"] = (
-            f"The board has cross-examined **{idea}**. You've heard technical, financial, GTM, customer, and legal objections.\n\n"
-            "Deliver your Closing Rebuttal. Address the TOP 3 most serious objections directly. "
-            "State your updated confidence delta (-3 to +3 vs opening). Be confident but not delusional. "
-            "This is your last chance to save the deal. 200-400 words."
-        )
-
-    elif phase == "resolution":
-        prompts["board_chair"] = (
-            f"You have heard the full deliberation on **{idea}**: opening pitch, five cross-examinations, "
-            "and the CEO's closing rebuttal.\n\n"
-            "Issue the Final Resolution. Include:\n"
-            "- Resolution: APPROVED / REJECTED / CONDITIONAL\n"
-            "- Funding recommendation\n"
-            "- Risk level (LOW / MEDIUM / HIGH / EXISTENTIAL)\n"
-            "- Majority opinion (concise)\n"
-            "- Dissenting opinion (if any)\n"
-            "- Non-negotiables before wire transfer\n"
-            "- Vote tally (APPROVE / REJECT / CONDITIONAL counts)\n\n"
-            "Be decisive. Your word is final. 300-500 words."
-        )
-
-    return prompts
+    with open(os.path.join(session_dir, "transcript.md"), "w", encoding="utf-8") as f:
+        f.write(f"# Self-Generating Deliberation — {idea}\n\nSession: {session_id}\n")
+        f.write(f"Steps generated: {len(plan_steps)}\n\n")
+        f.write("## Generated Plan\n\n")
+        for step in plan_steps:
+            agents_str = ", ".join(AGENT_POOL.get(a, {}).get("name", a) for a in step.get("agents", []))
+            f.write(f"### Step {step['step']}: {step.get('label', '')}\n")
+            f.write(f"- Agents: {agents_str}\n")
+            f.write(f"- Mode: {'Parallel' if step.get('parallel') else 'Sequential'}\n")
+            f.write(f"- Focus: {step.get('prompt_hint', '')}\n\n")
+        f.write("---\n\n")
+        for ak, responses in all_outputs.items():
+            name = AGENT_POOL.get(ak, {}).get("name", ak)
+            for i, text in enumerate(responses):
+                label = f" ({i+1})" if len(responses) > 1 else ""
+                f.write(f"## {name}{label}\n\n{text}\n\n---\n\n")
+    return all_outputs

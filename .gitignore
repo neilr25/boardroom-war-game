@@ -1,23 +1,10 @@
-# Environment
+﻿# Environment
 .env
+.env.local
 
-# Python
+# Session data (never commit)
+swarm1/sessions/
+swarm2/sessions/
+swarm3/sessions/
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-
-# Session outputs
-boardroom/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
